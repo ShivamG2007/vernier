@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Brand, ConnectionError, EmptyState, FilterTabs, Icon, LoadingState, SearchField } from './components/ui.jsx'
 import DemoLogin from './components/DemoLogin.jsx'
 import EventCalendar from './components/EventCalendar.jsx'
+import LoginIntro from './components/LoginIntro.jsx'
 import { useRecords } from './hooks/useRecords.js'
 import { dayKey, parseEventDate } from './lib/eventDates.js'
 
@@ -249,20 +250,27 @@ function DashboardApp({ session, onRememberChange, onSignOut }) {
   return <><a className="skip-link" href="#main">Skip to content</a><Header onSignOut={onSignOut} /><div className={`app-layout${preferences.reducedMotion ? ' is-reduced-motion' : ''}`}><aside className="sidebar"><Brand href="#home" className="sidebar-brand" /><Navigation open={open} /><a className={`sidebar-profile ${open === 'profile' ? 'is-active' : ''}`} href="#profile"><Icon name="user" size={21} /><span>Profile & preferences</span><Icon name="arrow" size={15} /></a><button className="sidebar-sign-out" type="button" onClick={onSignOut}>Sign out</button></aside><main id="main" tabIndex="-1" className="main-content"><div className="content-wrap">{open ? <DetailView page={open} content={content[open]} /> : <Dashboard lost={lost} events={events} listings={listings} machines={machines} bookings={bookings} onEventOpen={openEvent} onViewEvents={() => setFocusedEventId(null)} />}<footer className="footer"><span>Vernier · Precision for campus life</span><span>WhatsApp is the main student interface</span></footer></div></main></div><Navigation open={open} mobile /></>
 }
 function App() {
-  const [session, setSession] = useState(readDemoSession)
+  const [auth, setAuth] = useState(() => {
+    const session = readDemoSession()
+    return { session, phase: session ? 'intro' : 'login' }
+  })
+  const { session, phase } = auth
+  const showIntro = phase === 'intro'
+  const finishIntro = useCallback(() => setAuth((current) => current.phase === 'intro'
+    ? { ...current, phase: 'dashboard' } : current), [])
   function signIn(remembered) {
     storeDemoSession(remembered)
-    setSession({ username: demoUser, remembered })
+    setAuth({ session: { username: demoUser, remembered }, phase: 'intro' })
   }
   function changeRemembered(remembered) {
     storeDemoSession(remembered)
-    setSession({ username: demoUser, remembered })
+    setAuth((current) => ({ ...current, session: { username: demoUser, remembered } }))
   }
   function signOut() {
     clearDemoSession()
     window.location.hash = 'home'
-    setSession(null)
+    setAuth({ session: null, phase: 'login' })
   }
-  return session ? <DashboardApp session={session} onRememberChange={changeRemembered} onSignOut={signOut} /> : <DemoLogin onSignIn={signIn} />
+  return session ? <><div inert={showIntro ? true : undefined} aria-hidden={showIntro || undefined}><DashboardApp session={session} onRememberChange={changeRemembered} onSignOut={signOut} /></div>{showIntro && <LoginIntro onDone={finishIntro} reduceMotion={readDemoPreferences().reducedMotion} />}</> : <DemoLogin onSignIn={signIn} />
 }
 export default App
