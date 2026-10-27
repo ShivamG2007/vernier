@@ -180,7 +180,9 @@ def _text(value, limit, *, required=False):
 
 
 def _words(value):
-    return {w.casefold() for w in re.findall(r"\w+", value or "") if len(w) > 2}
+    # "books" and "book" should match, so drop a plain plural s ("glass" keeps its ss).
+    words = {w.casefold() for w in re.findall(r"\w+", value or "") if len(w) > 2}
+    return {w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in words}
 
 
 def _whatsapp_contact(value):
@@ -432,7 +434,7 @@ def add_listing(*, kind, item, price=None, details=None, contact=None):
                 if match["alerts_enabled"] and _whatsapp_contact(match["contact"]):
                     con.execute("INSERT INTO outbox(to_chat,text,created_at) VALUES (?,?,?)",
                                 (match["contact"], f"Someone listed a {item} for sale. Ask Vernier about current listings.", now()))
-    return listing_id, len(matches)
+    return listing_id, matches
 
 
 def list_listings(limit=20):

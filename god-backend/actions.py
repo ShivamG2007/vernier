@@ -33,7 +33,9 @@ UNRESOLVED_LOST_RULE = re.compile(
     r"\b(?:not found|still missing|unresolved|not recovered)\b.{0,50}\b(?:lost|missing)\b", re.I)
 BUY_RULE = re.compile(
     r"\b(?:any ?(?:one|body)|koi|kisi)\b[^.?!]{0,25}\b(?:sell|selling|bech\w*)\b|"
-    r"\b(?:want|need|looking) to buy\b|\bkhareed", re.I)
+    r"\b(?:want|need|looking) to buy\b|\bkhareed|"
+    # "buying a calculator" / "buy cycle": mentions buying and never selling.
+    r"^(?!.*\b(?:sell|selling|bech\w*)\b).*\bbuy(?:ing)?\b", re.I | re.S)
 LISTINGS_RULE = re.compile(
     r"\b(?:what|which|any|kya|koi)\b[^.!]{0,40}\bfor sale\b|\blisted\b[^.!]{0,30}\bfor sale\b|"
     r"\bwhat'?s\s+(?:for sale|available)\b|\bdala hai kya\b|\b(?:show|list)\b[^.!]{0,15}\blistings?\b", re.I)
@@ -422,10 +424,13 @@ def _handle_message(payload, planner=None):
                 details=text, contact=author)
             extra = {"id": listing_id}
             if kind == "buy" and matches:
-                reply = "Listing recorded. Already for sale: " + "; ".join(
+                reply = f"Buy request recorded for {item}. Already for sale: " + "; ".join(
                     m["item"] + (f" ({m['price']})" if m["price"] else "") for m in matches[:5]) + "."
+            elif kind == "buy":
+                reply = f"Buy request recorded for {item}. Nothing matching is for sale yet; I'll message you when someone lists one."
             else:
-                reply = "Listing recorded." + (f" {len(matches)} possible match(es) found." if matches else "")
+                reply = f"Listed {item} for sale." + (
+                    f" {len(matches)} buyer(s) are looking for this and will be told." if matches else "")
     elif action == "ask_listings":
         listings = store.list_listings()
         public_listings = [{"id": row["id"], "item": row["item"],
