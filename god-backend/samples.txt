@@ -1,0 +1,17 @@
+# One message per line. Lines starting with # are ignored.
+# Add real messages from your college groups here, then run: python try_llm.py
+bhai mera black boat earphones library me kho gaya, kisi ko mile toh batana
+lost my blue water bottle near block C canteen
+found a grey hoodie in room 204 after the lecture
+kisi ka id card mila hai, parking ke paas, DM me
+Dance club auditions this Friday 5pm at the auditorium, register now!
+Inter-hostel football final on Saturday at the main ground, everyone come support
+selling my cycle, 2000 rs, barely used
+anyone selling a cooler? need one for my room
+is the music room free at 5?
+book the meeting room tomorrow 3 to 4pm
+is the 8th floor boys hostel washing machine free?
+has anyone found my earbuds?
+what events are happening this weekend?
+where is Rahul right now
+haha same bro

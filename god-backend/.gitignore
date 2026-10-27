@@ -1,0 +1,17 @@
+# Local state and credentials
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+__pycache__/
+*.pyc
+bridge/node_modules/
+bridge/.wwebjs_auth/
+bridge/.wwebjs_cache/
+
+# Local test output and machine-specific runner
+vernier_export.xlsx
+vernier-test-export*.xlsx
+TEST_CHAT_LOG_*.txt
+tools/run_full_test.py

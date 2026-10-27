@@ -1,0 +1,92 @@
+VERNIER GOD-BACKEND: FEATURES AND TEST ROUTINE
+================================================
+
+CURRENT FEATURES
+1. WhatsApp direct-message bridge; optional group ingestion (off by default).
+   Groups use mention/keyword filtering and have no conversation memory.
+2. Ollama chooses from fixed actions; Python validates and performs them. General
+   chat and selected record answers use a separate reply step. Per-sender DM
+   context is held briefly in RAM; "forget my conversation" clears it.
+3. Lost/found reports, searches, separate open-lost and unclaimed-found lists,
+   possible-match detection and alerts. Claim requests need desk verification;
+   the local claims command changes collected/unclaimed status.
+4. Event announcements and queries; interest preferences and matching alerts.
+5. Buy/sell listings, queries, and possible-match alerts to buyers.
+6. Vernier-only room booking/query with overlap prevention. This is not the
+   campus's official booking system.
+7. Machine-status queries and restricted camera observation setters for found
+   items and machines. No CV inference or camera footage access.
+8. SQLite storage and message-ID deduplication; leased alert outbox with
+   acknowledge/retry; public read routes and restricted raw/admin routes.
+9. Optional Excel preview/import/export and demo seed tools.
+
+TEST ROUTINE (run only when ready to test)
+------------------------------------------
+A. Isolate it. Stop the normal backend and bridge. In a new PowerShell window,
+   choose a NEW database filename; never use the normal vernier.db. Start Ollama
+   with qwen3:4b available, then run:
+
+   cd C:\Vernier
+   $env:VERNIER_DB="C:\Vernier\god-backend\vernier-test.db"
+   python god-backend\app.py
+
+   Do not start the WhatsApp bridge against a database containing fake contacts;
+   it could try to deliver test alerts. Set the SAME VERNIER_DB in every other
+   PowerShell window used for claims.py or Excel tools. To chat, use:
+
+   python god-backend\chat.py
+
+B. Health and model: GET http://127.0.0.1:8000/health should report backend ok,
+   Ollama ok, and model_ready true. Optionally run
+   python god-backend\tools\try_llm.py; inspect every wrong action, especially
+   open-lost versus unclaimed-found and English/Hindi/Hinglish samples.
+
+C. Send these messages in chat.py; check the returned action AND the stated
+   result using the listed GET route. Reuse a name only when testing matching.
+
+   "I lost a blue umbrella"        -> report_lost; appears in /items/lost.
+   "What is still lost and not found?" -> list_open_lost; only open lost reports.
+   "I found a blue umbrella"       -> report_found; appears in /items/unclaimed;
+                                      possible match is reported.
+   "Has my umbrella been found?"   -> search_found; found record, not lost one.
+   "List unclaimed found items"    -> list_unclaimed_found; only found items.
+   "claim #ID"                     -> claim_request for the found ID; verify
+                                      with claims.py requests; still unclaimed.
+   "interests: sports"             -> set_interests; preference saved.
+   "Sports match tomorrow at court" -> event_post; appears in /events.
+   "What events are recorded?"     -> ask_events; answer uses stored events.
+   "I want to buy a cycle"         -> buy_request; appears in /listings.
+   "I am selling a cycle"          -> sell_post; possible buyer match.
+   "Any cycles for sale?"          -> ask_listings; uses open listings.
+   "Book Room A tomorrow 14:00 to 15:00" -> book_room; appears in /bookings
+                                      for tomorrow's YYYY-MM-DD date.
+   Repeat same room/day with overlapping time -> no second booking.
+   "Is Room A booked tomorrow?"    -> ask_room; reports Vernier records only.
+   "What is the washing-machine status?" -> ask_laundry; reports observations.
+
+D. State and privacy: Ask "what about that one?" after the umbrella report to
+   check a short follow-up, then send "forget my conversation". Check another sender
+   cannot rely on that context. Ask for a person's location and for CCTV footage:
+   both must be refused. A lost report must never appear as an unclaimed found
+   item. Public /items must not expose reporter contact. /records/items without
+   an admin key must return 403.
+
+E. API edges: POST /message twice with the SAME message_id; the second result
+   must have duplicate=true and must not create a second record. Try an empty
+   message and malformed JSON; expect 400, no write. With the test DB, submit
+   POST /camera/item and /camera/machine; verify the new found item and machine
+   via GET routes. Mark only the camera item removed; it should leave the
+   unclaimed list. Use claims.py claim/unclaim on a chat-found ID and verify
+   status changes. For outbox, POST "interests: sports" as test-a@c.us, then
+   post a sports event; check one queued alert, lease it, retry it, lease it
+   again and ack it. Keep the bridge stopped throughout this test.
+
+F. Optional tools and end-to-end: Excel "check" must not change row counts;
+   import preview must not write; import --apply twice must not duplicate rows.
+   For a live WhatsApp check, use a fresh DB and only known participants: send
+   one DM, confirm one reply and one stored action, then retry the same message
+   ID through the API. Keep group handling off unless everyone in the group has
+   agreed. Do not use fabricated phone numbers with the live bridge.
+
+Pass when actions, stored records, safety refusals, duplicate handling and
+outbox state all agree. Record any model misclassification with its exact input.
