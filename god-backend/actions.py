@@ -31,33 +31,6 @@ CAMERA_RULE = re.compile(
 UNRESOLVED_LOST_RULE = re.compile(
     r"\b(?:lost|missing)\b.{0,50}\b(?:not found|still missing|unresolved|not recovered)\b|"
     r"\b(?:not found|still missing|unresolved|not recovered)\b.{0,50}\b(?:lost|missing)\b", re.I)
-BUY_RULE = re.compile(
-    r"\b(?:any ?(?:one|body)|koi|kisi)\b[^.?!]{0,25}\b(?:sell|selling|bech\w*)\b|"
-    r"\b(?:want|need|looking) to buy\b|\bkhareed", re.I)
-LISTINGS_RULE = re.compile(
-    r"\b(?:what|which|any|kya|koi)\b[^.!]{0,40}\bfor sale\b|\blisted\b[^.!]{0,30}\bfor sale\b|"
-    r"\bwhat'?s\s+(?:for sale|available)\b|\bdala hai kya\b|\b(?:show|list)\b[^.!]{0,15}\blistings?\b", re.I)
-LOST_RULE = re.compile(r"\b(?:kho|gir)\s*(?:gaya|gayi|gya|gyi|gai|gaye)\b|\blost my\b", re.I)
-FOUND_RULE = re.compile(
-    r"\bkisi\s+ka\b[^?]{0,60}\b(?:mila|mili|mile)\b|"
-    r"\b(?:mila|mili|mile)\s+(?:hai|h|he|hain)\b[^?]{0,30}\bkisi\s+ka\b|"
-    r"^\s*(?:i\s+)?found\s+(?:a|an|some|this|these|someone'?s)\b", re.I)
-BOOK_RULE = re.compile(r"^\s*(?:please\s+|pls\s+|can you\s+)?book\b", re.I)
-ROOM_RULE = re.compile(r"\b(?:room|hall|lab|auditorium)\b", re.I)
-LAUNDRY_RULE = re.compile(r"\b(?:wash\w*|machine|laundry|dryer)\b", re.I)
-WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-CATEGORY_WORDS = [
-    ("sports", r"football|cricket|basketball|volleyball|badminton|kabaddi|athletics|sports?|tournament|match"),
-    ("dance", r"dance|dancing"),
-    ("music", r"music|singing|band|open mic|concert"),
-    ("theatre", r"drama|theatre|theater|nukkad|natak"),
-    ("tech", r"hackathon|coding|tech|robotics|programming"),
-    ("academic", r"seminar|lecture|quiz|exam|workshop"),
-    ("culture", r"fest|cultural|garba|diwali|holi"),
-]
-TIME_RANGE = re.compile(
-    r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.I)
-ONE_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat\s+(\d{1,2})(?::(\d{2}))?\b", re.I)
 
 TEAM_ACTIONS = {
     "lost_report": "report_lost", "found_report": "report_found", "ask_lost": "search_found",
@@ -100,9 +73,10 @@ def _record_reply(question, records, scope, fallback):
 
 
 def _summary(row):
+    color = row.get("color") or ""
     name = row.get("item") or row.get("name") or "item"
     place = row.get("place") or row.get("foundAt")
-    label = store.item_label(row.get("color"), name)
+    label = " ".join(part for part in (color, name) if part)
     return f"#{row['id']} {label}" + (f" at {place}" if place else "")
 
 
@@ -189,60 +163,6 @@ def _times(text):
     return None, None
 
 
-def _outlook_room(room_text, text, day, start, end):
-    room = outlook.find_room(room_text, text)
-    if not room:
-        return None, f"Which room? I can check: {outlook.room_names()}."
-    if not (day and start and end):
-        return None, f"Tell me the day and time for {room['name']}, e.g. \"{room['name']} tomorrow 3 to 4pm\"."
-    try:
-        outlook.check_request(day, start, end)
-    except ValueError as exc:
-        return None, str(exc)
-    return room, None
-
-
-def _book_in_outlook(room_text, text, day, start, end, author, direct):
-    room, problem = _outlook_room(room_text, text, day, start, end)
-    if problem:
-        return problem, None
-    if not direct:
-        return "Tag me or message me directly to book a room.", None
-    if not outlook.allowed(author):
-        return "Outlook room booking is limited to approved numbers right now.", None
-    when = f"{room['name']} on {_with_weekday(day)}, {start}-{end}"
-    try:
-        if not outlook.is_free(room, day, start, end, timeout=model.remaining_timeout(15)):
-            return f"{when} is already booked in Outlook. Try another time or room.", None
-        event = outlook.book(room, day, start, end, timeout=model.remaining_timeout(15))
-    except outlook.OutlookError as exc:
-        print(f"Outlook booking failed: {exc}")
-        return f"I couldn't book {room['name']} in Outlook right now ({exc}).", None
-    try:
-        booking_id = store.book_room(room["name"], day, start, end, author)
-    except ValueError:
-        booking_id = None
-
-    def on_result(response):
-        if response == "accepted":
-            message = f"Confirmed in Outlook: {when}."
-        elif response == "tentativelyAccepted":
-            message = f"{when} is tentatively accepted and waiting for approval in Outlook."
-        elif response == "declined":
-            message = f"The room declined {when}, so I removed the booking. Try another time or room."
-            if booking_id:
-                with store.connect() as con:
-                    con.execute("UPDATE bookings SET status='declined' WHERE id=?", (booking_id,))
-        else:
-            message = f"{room['name']} hasn't answered yet for {when}. It may need approval; check Outlook."
-        if author:
-            store.queue(author, message)
-
-    outlook.watch(event["id"], room, on_result)
-    return (f"Booking request sent to Outlook: {when}. I'll message you when the room confirms.",
-            {"id": booking_id, "outlook": "requested"})
-
-
 def _handle_message(payload, planner=None):
     if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
         raise ValueError("Message text is required")
@@ -315,18 +235,6 @@ def _handle_message(payload, planner=None):
         action = "chat"
     if action == "list_unclaimed_found" and UNRESOLVED_LOST_RULE.search(text):
         action = "list_open_lost"
-    if action == "sell_post" and BUY_RULE.search(text):
-        action = "buy_request"
-    if action in {"sell_post", "buy_request", "chat"} and LISTINGS_RULE.search(text):
-        action = "ask_listings"
-    if action in {"search_found", "list_unclaimed_found", "ask_room", "chat"} and LOST_RULE.search(text):
-        action = "report_lost"
-    elif action in {"search_found", "list_unclaimed_found", "chat"} and FOUND_RULE.search(text):
-        action = "report_found"
-    if action == "ask_laundry" and ROOM_RULE.search(text) and not LAUNDRY_RULE.search(text):
-        action = "ask_room"
-    if action == "ask_room" and BOOK_RULE.search(text):
-        action = "book_room"
 
     item = _field(proposal.get("item"), 120)
     color = _explicit_text(proposal.get("color", proposal.get("colour")), text, 60)
@@ -349,7 +257,7 @@ def _handle_message(payload, planner=None):
                 image_href=image_href, please_consult_this_person=consult,
                 source="chat", reporter=author)
             extra = {"id": item_id}
-            fact = f"Earlier reported {kind} {store.item_label(color, item)} as item #{item_id}"
+            fact = f"Earlier reported {kind} {' '.join(v for v in (color, item) if v)} as item #{item_id}"
             if kind == "found":
                 matches = store.find_matches(item_id)
                 alerted = store.alert_lost_reporters(item_id)
@@ -382,7 +290,7 @@ def _handle_message(payload, planner=None):
         if rows:
             lines = []
             for row in rows[:30]:
-                label = store.item_label(row["color"], row["item"])
+                label = " ".join(v for v in (row["color"], row["item"]) if v)
                 place = f" (last reported near {row['place']})" if row["place"] else ""
                 lines.append(f"#{row['id']} {label}{place}")
             reply = "Items reported lost and still open:\n" + "\n".join(lines)
@@ -391,12 +299,10 @@ def _handle_message(payload, planner=None):
         else:
             reply = "There are no unresolved lost-item reports recorded."
     elif action == "event_post":
-        # The model usually puts the event name in "item" and leaves category empty.
-        title = (_explicit_text(proposal.get("title"), text, 160) or
-                 _explicit_text(proposal.get("item"), text, 160) or text[:160])
-        category = _category(proposal.get("category"), text)
+        title = _explicit_text(proposal.get("title"), text, 160) or text[:160]
+        category = proposal.get("category") if proposal.get("category") in model.CATEGORIES else "other"
         event_id = store.add_event(title=title, category=category,
-            date=_event_date(proposal.get("date"), text),
+            date=_explicit_text(proposal.get("date"), text, 100),
             venue=_explicit_text(proposal.get("venue"), text, 120),
             details=text, major=proposal.get("major") is True,
             source=_field(payload.get("chat_name"), 200) if is_group else author)
@@ -404,13 +310,10 @@ def _handle_message(payload, planner=None):
         reply = f"Event recorded under {category}. Interested students will receive an alert."
     elif action == "ask_events":
         events = store.list_events()
-        public_events = [{k: _with_weekday(row[k]) if k == "date" else row[k]
-                          for k in ("id", "title", "category", "date", "venue", "major")}
+        public_events = [{k: row[k] for k in ("id", "title", "category", "date", "venue", "major")}
                          for row in events]
         fallback = "Recorded events: " + "; ".join(row["title"] for row in events[:5]) + "." if events else "I don't have any events recorded yet."
-        # The model can't work out weekdays itself, so give it today's date and each event's weekday.
-        records = {"today": _with_weekday(date.today().isoformat()), "events": public_events}
-        reply = _record_reply(text, records, "recorded events", fallback) if events else fallback
+        reply = _record_reply(text, public_events, "recorded events", fallback) if events else fallback
     elif action in {"sell_post", "buy_request"}:
         if not item:
             reply = "Tell me which item you're buying or selling."
@@ -420,24 +323,17 @@ def _handle_message(payload, planner=None):
                 price=_explicit_text(proposal.get("price"), text, 80),
                 details=text, contact=author)
             extra = {"id": listing_id}
-            if kind == "buy" and matches:
-                reply = "Listing recorded. Already for sale: " + "; ".join(
-                    m["item"] + (f" ({m['price']})" if m["price"] else "") for m in matches[:5]) + "."
-            else:
-                reply = "Listing recorded." + (f" {len(matches)} possible match(es) found." if matches else "")
+            reply = "Listing recorded." + (f" {matches} possible match(es) found." if matches else "")
     elif action == "ask_listings":
         listings = store.list_listings()
-        public_listings = [{"id": row["id"], "item": row["item"],
-                            "type": "for sale" if row["kind"] == "sell" else "wanted by a buyer",
-                            "price": f"₹{row['price']}" if (row["price"] or "").isdigit() else row["price"]}
+        public_listings = [{k: row[k] for k in ("id", "kind", "item", "price")}
                            for row in listings]
         fallback = "Open listings: " + "; ".join(
             f"{row['kind']} {row['item']}" for row in listings[:5]) + "." if listings else "I don't have any open listings recorded yet."
         reply = _record_reply(text, public_listings, "open buy and sell listings", fallback) if listings else fallback
     elif action == "ask_room":
-        day = (_text_day(text) or _day(proposal.get("day") or proposal.get("date"), text)
-               or date.today().isoformat())
-        room = _field(proposal.get("room"), 120) or _field(proposal.get("item"), 120) or None
+        day = _day(proposal.get("day"), text) or date.today().isoformat()
+        room = _field(proposal.get("room"), 120) or None
         bookings = store.list_bookings(day, room)
         start, end = _times(text)
         outlook_room = outlook.find_room(room, text) if outlook.ready() and start else None
@@ -463,10 +359,7 @@ def _handle_message(payload, planner=None):
         start, end = _times(text)
         if not (start and end):
             start, end = _field(proposal.get("start"), 5), _field(proposal.get("end"), 5)
-        if outlook.ready():
-            reply, extra = _book_in_outlook(room, text, day, start, end, author,
-                                            direct=not is_group or mentioned)
-        elif not (room and day and start and end):
+        if not (room and day and start and end):
             reply = "Please give a room, day, start time and end time to book it."
         else:
             try:

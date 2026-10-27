@@ -47,39 +47,6 @@ def _create_items(con, name="items"):
     )""")
 
 
-def snapshot(limit=500):
-    """Every table exactly as stored (newest rows first), for the live database view."""
-    with connect() as con:
-        tables = [r["name"] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        result = {}
-        for table in tables:
-            cur = con.execute(f'SELECT rowid, * FROM "{table}" ORDER BY rowid DESC LIMIT ?', (limit,))
-            result[table] = {
-                "columns": [d[0] for d in cur.description][1:],
-                "rows": [{"rowid": r[0], "values": list(r)[1:]} for r in cur],
-                "total": con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0],
-            }
-    return {"database": str(DB_PATH), "read_at": now(), "tables": result}
-
-
-def reset_db():
-    """Empty the database so each run starts fresh; the previous run is copied to *-previous.db."""
-    if not DB_PATH.exists():
-        return
-    backup = sqlite3.connect(DB_PATH.with_name(DB_PATH.stem + "-previous.db"))
-    try:
-        with connect() as con:
-            con.backup(backup)
-    finally:
-        backup.close()
-    with connect() as con:
-        tables = [r["name"] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
-        for table in tables:
-            con.execute(f'DROP TABLE "{table}"')
-
-
 def init_db():
     """Create feature tables and migrate older local item records without deleting them."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -170,27 +137,8 @@ def _text(value, limit, *, required=False):
     return value[:limit] or None
 
 
-def _singular(word):
-    # "wire cutters" must match "wire cutter", and "batteries" must match "battery".
-    if len(word) > 4 and word.endswith("ies"):
-        return word[:-3] + "y"
-    if word.endswith(("sses", "xes", "ches", "shes")):
-        return word[:-2]
-    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
-        return word[:-1]
-    return word
-
-
 def _words(value):
-    return {_singular(w.casefold()) for w in re.findall(r"\w+", value or "") if len(w) > 2}
-
-
-def item_label(color, item):
-    # Skip the colour when the item name already includes it ("red casio calculator").
-    color = color or ""
-    if _words(color) <= _words(item):
-        color = ""
-    return " ".join(v for v in (color, item) if v)
+    return {w.casefold() for w in re.findall(r"\w+", value or "") if len(w) > 2}
 
 
 def _whatsapp_contact(value):
@@ -335,7 +283,7 @@ def alert_lost_reporters(found_id):
             cur = con.execute("INSERT OR IGNORE INTO match_notifications(lost_id,found_id) VALUES (?,?)",
                               (lost["id"], found_id))
             if cur.rowcount:
-                description = item_label(found["color"], found["item"])
+                description = " ".join(v for v in (found["color"], found["item"]) if v)
                 place = f" at {found['place']}" if found["place"] else ""
                 con.execute("INSERT INTO outbox(to_chat,text,created_at) VALUES (?,?,?)",
                             (lost["reporter"], f"Possible match for your lost item: {description}{place} (#{found_id}). Ask the lost-and-found desk to verify ownership.", now()))
@@ -442,7 +390,7 @@ def add_listing(*, kind, item, price=None, details=None, contact=None):
                 if match["alerts_enabled"] and _whatsapp_contact(match["contact"]):
                     con.execute("INSERT INTO outbox(to_chat,text,created_at) VALUES (?,?,?)",
                                 (match["contact"], f"Someone listed a {item} for sale. Ask Vernier about current listings.", now()))
-    return listing_id, matches
+    return listing_id, len(matches)
 
 
 def list_listings(limit=20):
