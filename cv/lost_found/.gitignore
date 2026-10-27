@@ -1,0 +1,2 @@
+# Model weights are too big for GitHub; download yolov8x.pt into this folder (see README.md).
+*.pt
