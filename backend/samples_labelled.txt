@@ -1,0 +1,77 @@
+# Format: intent | message
+# Coverage for all 14 intents in English, Hindi, and Hinglish with typos and emojis
+
+# lost_report
+lost_report | bhai mera black boat earphones library me kho gaya, kisi ko mile toh batana 😭
+lost_report | mera black wallet kho gaya hai library me kisi ko mila kya?
+lost_report | lost my blue water bottle near block C canteen yesterday
+lost_report | yaar room ki key kahi gir gayi shyd ground floor pe.. help pls 🙏
+
+# found_report
+found_report | kisi ka black wallet mila hai library canteen ke pass 💳
+found_report | found a grey hoodie in room 204 after lecture
+found_report | kisi ka id card mila hai ground floor washroom ke bahar, dm me
+found_report | library 2nd floor pe ek casio calculator mila h kisi ka
+
+# event_post
+event_post | Dance club auditions this Friday 5pm at the auditorium, register now! 💃
+event_post | Inter-hostel football final on Saturday 4 PM at the main ground, sab log aana ⚽🏆
+event_post | Coding club hackathon this Sunday 10am at tech block seminar hall, cash prizes 💻🔥
+event_post | Drama club nukkad natak registrations open till tomorrow evening!
+
+# sell_post
+sell_post | selling cooler, good working condition, 1500 rs only dm ❄️
+sell_post | selling my cycle, 2000 rs, barely used 🚲
+sell_post | engineering drawing kit & drafter for sale, 400 rs, block B
+sell_post | electric kettle for sale 500rs, perfectly working, hostel 3
+
+# buy_request
+buy_request | anyone selling a cooler? urgent requirement for hostel room 🥵
+buy_request | kisi ke paas cycle hai kya bechne ke liye? need to buy one
+buy_request | anyone selling second hand mattress? dm price
+buy_request | looking to buy clrs algorithms book second hand 📚
+
+# ask_lost
+ask_lost | has anyone found my earbuds?
+ask_lost | koi blue bottle aayi h kya lost and found shelf pe?
+ask_lost | did anyone turn in black specs found in LT-2?
+
+# ask_events
+ask_events | what events are happening this weekend? 🎉
+ask_events | aaj shaam ko koi club activity ya workshop hai kya?
+ask_events | any cultural fest updates for today?
+
+# ask_room
+ask_room | is the music room free at 5?
+ask_room | dance room khali hai kya abhi 4 baje?
+ask_room | is conference room b2 vacant right now?
+
+# book_room
+book_room | book the meeting room tomorrow 3 to 4pm
+book_room | book music room today from 17:00 to 18:00
+book_room | seminar hall 1 book kardo aaj shaam 6pm to 7pm please
+
+# ask_laundry
+ask_laundry | is the 8th floor boys hostel washing machine free? 🧺
+ask_laundry | 3rd floor girls hostel machine chal rahi hai ya free hai?
+ask_laundry | washing machine free h kya second floor pe?
+
+# ask_listings
+ask_listings | what cycles are available for sale right now?
+ask_listings | kisi ne cooler bechne ke liye dala hai kya?
+ask_listings | any study tables listed for sale this week?
+
+# ask_person
+ask_person | where is Rahul right now
+ask_person | Priya kaha hai abhi? urgent kaam hai
+ask_person | can you track my friend Rohan's location on campus?
+
+# chit_chat
+chit_chat | haha same bro 😂
+chit_chat | good morning vernier bhai kaise ho
+chit_chat | thank you so much for the help buddy! 🙏
+
+# other
+other | ok noted
+other | assignment submission date extend ho gayi hai sabke liye
+other | canteen me aaj lunch me kya bana h
