@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,7 +60,10 @@ def add_lost_found(kind, data, contact, source):
 
 
 def describe(r):
-    return " ".join(x for x in [r.get("colour"), r.get("item")] if x).strip() or "item"
+    item, colour = r.get("item") or "", r.get("colour") or ""
+    if tokens(colour) <= tokens(item):
+        colour = ""
+    return " ".join(x for x in [colour, item] if x).strip() or "item"
 
 
 def handle_found(row):
@@ -92,6 +95,25 @@ def notify_interested(event):
             db.queue(s["contact"], f"New {event['category']} update: {event['title']}"
                                    + (f" on {event['date']}" if event["date"] else "")
                                    + (f" at {event['venue']}" if event["venue"] else ""))
+
+
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def event_date(text, guess):
+    # the model often just repeats today's date, so work out day words from the message itself
+    low = text.lower()
+    today = datetime.now().date()
+    if re.search(r"\b(today|tonight|aaj)\b", low):
+        return today.isoformat()
+    if re.search(r"\b(tomorrow|tmrw|kal)\b", low):
+        return (today + timedelta(days=1)).isoformat()
+    for i, day in enumerate(WEEKDAYS):
+        if re.search(rf"\b{day}\b", low):
+            return (today + timedelta(days=(i - today.weekday()) % 7)).isoformat()
+    if guess == today.isoformat() and str(today.day) not in low:
+        return ""
+    return guess or ""
 
 
 def overlaps(a_start, a_end, b_start, b_end):
@@ -167,7 +189,7 @@ def message(m: Incoming):
             reply = "Thanks! I've logged it" + (" and pinged someone who lost a similar item." if matched else ".")
         elif intent == "event_post":
             ev = {"title": data.get("title") or text[:80], "category": data.get("category", "other"),
-                  "date": data.get("date", ""), "venue": data.get("venue", ""), "major": bool(data.get("major"))}
+                  "date": event_date(text, data.get("date", "")), "venue": data.get("venue", ""), "major": bool(data.get("major"))}
             db.execute("INSERT INTO events(title,category,date,venue,details,major,source,created) VALUES (?,?,?,?,?,?,?,?)",
                        (ev["title"], ev["category"], ev["date"], ev["venue"], text, int(ev["major"]), m.chat_name, db.now()))
             notify_interested(ev)

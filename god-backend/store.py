@@ -137,8 +137,27 @@ def _text(value, limit, *, required=False):
     return value[:limit] or None
 
 
+def _singular(word):
+    # "wire cutters" must match "wire cutter", and "batteries" must match "battery".
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith(("sses", "xes", "ches", "shes")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
 def _words(value):
-    return {w.casefold() for w in re.findall(r"\w+", value or "") if len(w) > 2}
+    return {_singular(w.casefold()) for w in re.findall(r"\w+", value or "") if len(w) > 2}
+
+
+def item_label(color, item):
+    # Skip the colour when the item name already includes it ("red casio calculator").
+    color = color or ""
+    if _words(color) <= _words(item):
+        color = ""
+    return " ".join(v for v in (color, item) if v)
 
 
 def _whatsapp_contact(value):
@@ -283,7 +302,7 @@ def alert_lost_reporters(found_id):
             cur = con.execute("INSERT OR IGNORE INTO match_notifications(lost_id,found_id) VALUES (?,?)",
                               (lost["id"], found_id))
             if cur.rowcount:
-                description = " ".join(v for v in (found["color"], found["item"]) if v)
+                description = item_label(found["color"], found["item"])
                 place = f" at {found['place']}" if found["place"] else ""
                 con.execute("INSERT INTO outbox(to_chat,text,created_at) VALUES (?,?,?)",
                             (lost["reporter"], f"Possible match for your lost item: {description}{place} (#{found_id}). Ask the lost-and-found desk to verify ownership.", now()))
@@ -390,7 +409,7 @@ def add_listing(*, kind, item, price=None, details=None, contact=None):
                 if match["alerts_enabled"] and _whatsapp_contact(match["contact"]):
                     con.execute("INSERT INTO outbox(to_chat,text,created_at) VALUES (?,?,?)",
                                 (match["contact"], f"Someone listed a {item} for sale. Ask Vernier about current listings.", now()))
-    return listing_id, len(matches)
+    return listing_id, matches
 
 
 def list_listings(limit=20):
