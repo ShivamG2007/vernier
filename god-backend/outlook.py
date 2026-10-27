@@ -160,6 +160,9 @@ def _graph(method, path, body=None, timeout=15):
         except Exception:
             detail = ""
         if exc.code == 401:
+            if _manual_token():
+                raise OutlookError("The Outlook token expired. Copy a fresh one from Graph Explorer into "
+                                   "VERNIER_OUTLOOK_TOKEN and restart the backend.") from None
             raise OutlookError("Outlook sign-in expired. Run: python outlook.py login") from None
         if exc.code == 403:
             raise OutlookError(f"The college account doesn't allow this ({detail or 'access denied'})") from None
@@ -169,7 +172,12 @@ def _graph(method, path, body=None, timeout=15):
 
 
 def rooms():
-    return [r for r in config().get("rooms", []) if r.get("name") and r.get("email")]
+    return [r for r in config().get("rooms", []) if r.get("name")]
+
+
+def is_room_mailbox(room):
+    """College rooms have their own email and accept/decline invites; demo rooms are just locations."""
+    return bool(room.get("email"))
 
 
 def room_names():
@@ -229,7 +237,31 @@ def _slot(day, clock):
     return {"dateTime": f"{day}T{clock}:00", "timeZone": config()["timezone"]}
 
 
+def _local_iso(day, clock):
+    return datetime.fromisoformat(f"{day}T{clock}").astimezone().isoformat(timespec="seconds")
+
+
+def _same_place(room, location):
+    location = (location or "").lower()
+    return any((p := _pattern(label)) and re.search(p, location)
+               for label in [room["name"], *room.get("aliases", [])])
+
+
+def _location_free(room, day, start, end, timeout):
+    path = ("/me/calendarView?startDateTime=" + quote(_local_iso(day, start)) +
+            "&endDateTime=" + quote(_local_iso(day, end)) +
+            "&$select=subject,location,showAs,isCancelled&$top=100")
+    for event in _graph("GET", path, timeout=timeout).get("value", []):
+        if event.get("isCancelled") or event.get("showAs") == "free":
+            continue
+        if _same_place(room, event.get("location", {}).get("displayName")):
+            return False
+    return True
+
+
 def is_free(room, day, start, end, timeout=15):
+    if not is_room_mailbox(room):
+        return _location_free(room, day, start, end, timeout)
     data = _graph("POST", "/me/calendar/getSchedule", {
         "schedules": [room["email"]],
         "startTime": _slot(day, start),
@@ -246,21 +278,24 @@ def is_free(room, day, start, end, timeout=15):
 
 def book(room, day, start, end, timeout=15):
     cfg = config()
-    place = {"displayName": room["name"], "locationEmailAddress": room["email"],
-             "locationType": "conferenceRoom"}
-    return _graph("POST", "/me/events", {
+    place = {"displayName": room["name"], "locationType": "conferenceRoom"}
+    if is_room_mailbox(room):
+        place["locationEmailAddress"] = room["email"]
+    body = {
         "subject": cfg["subject"],
         "body": {"contentType": "text", "content": "Booked from WhatsApp through Vernier."},
         "start": _slot(day, start),
         "end": _slot(day, end),
         "location": place,
         "locations": [place],
-        "attendees": [{"emailAddress": {"address": room["email"], "name": room["name"]},
-                       "type": "resource"}],
         "showAs": "busy",
-        "allowNewTimeProposals": False,
         "transactionId": str(uuid.uuid4()),
-    }, timeout=timeout)
+    }
+    if is_room_mailbox(room):
+        body["attendees"] = [{"emailAddress": {"address": room["email"], "name": room["name"]},
+                              "type": "resource"}]
+        body["allowNewTimeProposals"] = False
+    return _graph("POST", "/me/events", body, timeout=timeout)
 
 
 def cancel(event_id):
@@ -320,7 +355,7 @@ def _cli(args):
             print(f"Signed in as: {me.get('displayName')} <{me.get('mail') or me.get('userPrincipalName')}>")
         for room in rooms():
             aliases = ", ".join(room.get("aliases", []))
-            print(f"  {room['name']:<12} {room['email']}" + (f"   (also: {aliases})" if aliases else ""))
+            print(f"  {room['name']:<14} {room.get('email') or '(location only)'}" + (f"   (also: {aliases})" if aliases else ""))
     elif command in {"check", "book"} and len(args) == 5:
         room = find_room(args[1])
         if not room:
@@ -331,6 +366,9 @@ def _cli(args):
         print(f"{room['name']} on {day} {start}-{end}: {'FREE' if free else 'BUSY'}")
         if command == "book" and free:
             event = book(room, day, start, end)
+            if not is_room_mailbox(room):
+                print(f"Booked in Outlook: {room['name']} on {day} {start}-{end}")
+                return
             print(f"Booking sent. Waiting for {room['name']} to answer...")
             for _ in range(15):
                 time.sleep(6)

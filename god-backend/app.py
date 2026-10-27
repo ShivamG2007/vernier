@@ -188,5 +188,7 @@ if __name__ == "__main__":
         raise RuntimeError("Set VERNIER_ADMIN_KEY before binding outside localhost")
     store.init_db()
     print(f"Outlook room booking: {outlook.status()}")
+    if outlook.ready() and not outlook.config().get("allowed_numbers"):
+        print("  Warning: allowed_numbers is empty, so anyone who messages the bot can book rooms.")
     print(f"Vernier master backend listening at http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
