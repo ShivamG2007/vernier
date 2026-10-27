@@ -1,3 +1,5 @@
 # Core backend uses only the Python standard library.
+# Outlook room booking (outlook.py) requires:
+msal>=1.28,<2
 # The optional Excel import/export/check tools require:
 openpyxl>=3.1,<4

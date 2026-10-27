@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import actions
 import model
+import outlook
 import store
 
 HOST = os.environ.get("VERNIER_HOST", "127.0.0.1")
@@ -99,7 +100,7 @@ class Handler(BaseHTTPRequestHandler):
                     "POST /preferences", "POST /outbox/{id}/ack", "POST /outbox/{id}/retry"]})
             elif path.path == "/health":
                 self.send_json(200, {"backend": "ok", "groups_enabled": actions.GROUPS_ENABLED,
-                                     **model.status()})
+                                     "outlook": outlook.status(), **model.status()})
             elif path.path == "/items":
                 self.send_json(200, {"items": store.list_items()})
             elif path.path == "/items/lost":
@@ -209,5 +210,6 @@ if __name__ == "__main__":
         store.reset_db()
         print(f"Database cleared (previous run saved to {store.DB_PATH.stem}-previous.db)")
     store.init_db()
+    print(f"Outlook room booking: {outlook.status()}")
     print(f"Vernier master backend listening at http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

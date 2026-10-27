@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import memory
 import model
+import outlook
 import store
 
 GROUPS_ENABLED = os.environ.get("VERNIER_ENABLE_GROUPS", "0") == "1"
@@ -186,6 +187,60 @@ def _times(text):
         if start:
             return start, f"{(int(start[:2]) + 1) % 24:02d}{start[2:]}"
     return None, None
+
+
+def _outlook_room(room_text, text, day, start, end):
+    room = outlook.find_room(room_text, text)
+    if not room:
+        return None, f"Which room? I can check: {outlook.room_names()}."
+    if not (day and start and end):
+        return None, f"Tell me the day and time for {room['name']}, e.g. \"{room['name']} tomorrow 3 to 4pm\"."
+    try:
+        outlook.check_request(day, start, end)
+    except ValueError as exc:
+        return None, str(exc)
+    return room, None
+
+
+def _book_in_outlook(room_text, text, day, start, end, author, direct):
+    room, problem = _outlook_room(room_text, text, day, start, end)
+    if problem:
+        return problem, None
+    if not direct:
+        return "Tag me or message me directly to book a room.", None
+    if not outlook.allowed(author):
+        return "Outlook room booking is limited to approved numbers right now.", None
+    when = f"{room['name']} on {_with_weekday(day)}, {start}-{end}"
+    try:
+        if not outlook.is_free(room, day, start, end, timeout=model.remaining_timeout(15)):
+            return f"{when} is already booked in Outlook. Try another time or room.", None
+        event = outlook.book(room, day, start, end, timeout=model.remaining_timeout(15))
+    except outlook.OutlookError as exc:
+        print(f"Outlook booking failed: {exc}")
+        return f"I couldn't book {room['name']} in Outlook right now ({exc}).", None
+    try:
+        booking_id = store.book_room(room["name"], day, start, end, author)
+    except ValueError:
+        booking_id = None
+
+    def on_result(response):
+        if response == "accepted":
+            message = f"Confirmed in Outlook: {when}."
+        elif response == "tentativelyAccepted":
+            message = f"{when} is tentatively accepted and waiting for approval in Outlook."
+        elif response == "declined":
+            message = f"The room declined {when}, so I removed the booking. Try another time or room."
+            if booking_id:
+                with store.connect() as con:
+                    con.execute("UPDATE bookings SET status='declined' WHERE id=?", (booking_id,))
+        else:
+            message = f"{room['name']} hasn't answered yet for {when}. It may need approval; check Outlook."
+        if author:
+            store.queue(author, message)
+
+    outlook.watch(event["id"], room, on_result)
+    return (f"Booking request sent to Outlook: {when}. I'll message you when the room confirms.",
+            {"id": booking_id, "outlook": "requested"})
 
 
 def _handle_message(payload, planner=None):
@@ -384,7 +439,19 @@ def _handle_message(payload, planner=None):
                or date.today().isoformat())
         room = _field(proposal.get("room"), 120) or _field(proposal.get("item"), 120) or None
         bookings = store.list_bookings(day, room)
-        if bookings:
+        start, end = _times(text)
+        outlook_room = outlook.find_room(room, text) if outlook.ready() and start else None
+        if outlook_room:
+            try:
+                outlook.check_request(day, start, end)
+                free = outlook.is_free(outlook_room, day, start, end, timeout=model.remaining_timeout(15))
+            except (ValueError, outlook.OutlookError) as exc:
+                reply = f"I couldn't check Outlook right now ({exc})."
+            else:
+                when = f"{outlook_room['name']} on {_with_weekday(day)}, {start}-{end}"
+                reply = (f"{when} is free in Outlook. Say \"book {outlook_room['name']} ...\" to book it."
+                         if free else f"{when} is already booked in Outlook.")
+        elif bookings:
             reply = "Vernier bookings: " + "; ".join(
                 f"{b['room']} {b['start']}-{b['end']}" for b in bookings[:10]) + "."
         else:
@@ -396,7 +463,10 @@ def _handle_message(payload, planner=None):
         start, end = _times(text)
         if not (start and end):
             start, end = _field(proposal.get("start"), 5), _field(proposal.get("end"), 5)
-        if not (room and day and start and end):
+        if outlook.ready():
+            reply, extra = _book_in_outlook(room, text, day, start, end, author,
+                                            direct=not is_group or mentioned)
+        elif not (room and day and start and end):
             reply = "Please give a room, day, start time and end time to book it."
         else:
             try:
