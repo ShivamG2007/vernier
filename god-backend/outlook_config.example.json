@@ -1,0 +1,13 @@
+{
+  "client_id": "PASTE-APPLICATION-CLIENT-ID-HERE",
+  "tenant": "organizations",
+  "timezone": "India Standard Time",
+  "subject": "Room booking (via Vernier)",
+  "max_hours": 3,
+  "max_days_ahead": 30,
+  "allowed_numbers": [],
+  "rooms": [
+    {"name": "MR-1", "email": "PASTE-ROOM-EMAIL@plaksha.edu.in", "aliases": ["meeting room 1"]},
+    {"name": "MR-2", "email": "PASTE-ROOM-EMAIL@plaksha.edu.in", "aliases": ["meeting room 2"]}
+  ]
+}
