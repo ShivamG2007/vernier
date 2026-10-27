@@ -228,6 +228,7 @@ if __name__ == "__main__":
         store.reset_db()
         print(f"Database cleared (previous run saved to {store.DB_PATH.stem}-previous.db)")
     store.init_db()
+    print(f"Group chats: {'on' if actions.GROUPS_ENABLED else 'off (set VERNIER_ENABLE_GROUPS=1 here to turn on)'}")
     print(f"Outlook room booking: {outlook.status()}")
     if outlook.ready() and not outlook.config().get("allowed_numbers"):
         print("  Warning: allowed_numbers is empty, so anyone who messages the bot can book rooms.")
