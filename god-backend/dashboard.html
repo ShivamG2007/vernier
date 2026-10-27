@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vernier Live Database</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #16181d; --muted: #646b78; --line: #e3e6eb;
+    --head: #f1f3f6; --accent: #2f6fed; --new: #d9f7e3; --changed: #fff2c2;
+    --ok: #1f9d55; --warn: #c27c0e; --bad: #d14343; --chip: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --ink: #e8eaee; --muted: #9aa1ad; --line: #2a2f39;
+      --head: #1d2129; --accent: #6b9bff; --new: #12432a; --changed: #4a3c0c;
+      --ok: #3ccf7f; --warn: #e6a23c; --bad: #ff6b6b; --chip: #232833;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line);
+           padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: pulse 1.6s infinite; }
+  .dot.down { background: var(--bad); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); }
+                     100% { box-shadow: 0 0 0 8px transparent; } }
+  .spacer { flex: 1; }
+  .path { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+  main { padding: 16px; max-width: 1600px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+          text-decoration: none; color: inherit; transition: background .6s; }
+  .tile b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 12px; }
+  .tile.bump { background: var(--new); transition: none; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+  section > h2 { margin: 0; padding: 10px 14px; font-size: 15px; display: flex; gap: 10px; align-items: baseline;
+                 border-bottom: 1px solid var(--line); }
+  h2 code { color: var(--muted); font-weight: 400; font-size: 12px; }
+  h2 .count { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--head); font-weight: 600; white-space: nowrap; z-index: 1; }
+  td { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.null { color: var(--muted); font-style: italic; }
+  tr.new td { background: var(--new); }
+  td.changed { background: var(--changed); }
+  tr td { transition: background 2.5s; }
+  .empty { padding: 14px; color: var(--muted); }
+  .note { padding: 6px 14px; color: var(--muted); font-size: 12px; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  .error { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--bad); color: var(--bad);
+           background: var(--panel); display: none; }
+  @media (max-width: 600px) { header { padding: 10px 12px; } main { padding: 12px; } .path { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vernier · live database</h1>
+  <span class="status"><span id="dot" class="dot"></span><span id="state">connecting…</span></span>
+  <span class="spacer"></span>
+  <label class="toggle"><input type="checkbox" id="mask" checked> Hide phone numbers</label>
+  <span class="path" id="path"></span>
+</header>
+<main>
+  <div class="error" id="error"></div>
+  <div class="tiles" id="tiles"></div>
+  <div id="tables"></div>
+</main>
+<script>
+// Reads /db (every table straight from SQLite) and redraws whatever changed. Nothing is cached or copied.
+const POLL_MS = 1500;
+const ORDER = ["items", "events", "listings", "bookings", "machines", "students",
+               "claim_requests", "outbox", "match_notifications", "processed_messages", "legacy_imports"];
+const LABELS = {
+  items: "Lost & found items", events: "Events", listings: "Buy & sell listings", bookings: "Room bookings",
+  machines: "Washing machines", students: "Students & interests", claim_requests: "Claim requests",
+  outbox: "Outgoing alerts", match_notifications: "Lost ↔ found matches",
+  processed_messages: "Processed WhatsApp messages", legacy_imports: "Spreadsheet imports",
+};
+const STATUS = { ok: ["open", "unclaimed", "booked", "sent", "free", "pending", "active"],
+                 warn: ["leased", "matched", "claim_pending", "in use"],
+                 bad: ["claimed", "collected", "cancelled", "failed", "rejected"] };
+const CONTACT = /^(\d{2})(\d{4,11})(\d{3})@(c\.us|lid|g\.us)$/;
+
+const maskBox = document.getElementById("mask");
+try { maskBox.checked = localStorage.getItem("vernier-mask") !== "0"; } catch (_) {}
+maskBox.addEventListener("change", () => {
+  try { localStorage.setItem("vernier-mask", maskBox.checked ? "1" : "0"); } catch (_) {}
+  last = {}; render(current, false);
+});
+
+let current = null, last = {}, seen = {}, busy = false, first = true;
+
+function show(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value);
+  return maskBox.checked ? text.replace(CONTACT, (_, a, mid, b, dom) => `${a}${"•".repeat(mid.length)}${b}@${dom}`) : text;
+}
+
+function cell(column, value, changed) {
+  const td = document.createElement("td");
+  const text = show(value);
+  if (text === null) { td.textContent = "null"; td.className = "null"; }
+  else if (/status|state/.test(column) && text.length < 20) {
+    const chip = document.createElement("span");
+    const tone = Object.keys(STATUS).find(k => STATUS[k].includes(text.toLowerCase()));
+    chip.className = "chip" + (tone ? " " + tone : "");
+    chip.textContent = text;
+    td.appendChild(chip);
+  } else { td.textContent = text; }
+  if (text !== null) td.title = text;
+  if (changed) td.classList.add("changed");
+  return td;
+}
+
+function tableNames(tables) {
+  const names = Object.keys(tables);
+  return [...ORDER.filter(n => names.includes(n)), ...names.filter(n => !ORDER.includes(n)).sort()];
+}
+
+function render(data, animate) {
+  if (!data) return;
+  const tiles = document.getElementById("tiles"), holder = document.getElementById("tables");
+  for (const name of tableNames(data.tables)) {
+    const t = data.tables[name];
+    const key = JSON.stringify(t) + maskBox.checked;
+    let tile = document.getElementById("tile-" + name);
+    if (!tile) {
+      tile = document.createElement("a"); tile.className = "tile"; tile.id = "tile-" + name; tile.href = "#t-" + name;
+      tile.innerHTML = `<b></b><span></span>`; tiles.appendChild(tile);
+    }
+    const before = tile.querySelector("b").textContent;
+    tile.querySelector("b").textContent = t.total;
+    tile.querySelector("span").textContent = LABELS[name] || name;
+    if (animate && before !== "" && before !== String(t.total)) {
+      tile.classList.add("bump"); requestAnimationFrame(() => setTimeout(() => tile.classList.remove("bump"), 50));
+    }
+    if (last[name] === key) continue;
+    last[name] = key;
+
+    let sec = document.getElementById("t-" + name);
+    if (!sec) { sec = document.createElement("section"); sec.id = "t-" + name; holder.appendChild(sec); }
+    const prev = seen[name] || {};
+    const next = {};
+    sec.innerHTML = "";
+    const h = document.createElement("h2");
+    h.innerHTML = `<span></span><code></code><span class="count"></span>`;
+    h.children[0].textContent = LABELS[name] || name;
+    h.children[1].textContent = name;
+    h.children[2].textContent = `${t.total} row${t.total === 1 ? "" : "s"}`;
+    sec.appendChild(h);
+    if (!t.rows.length) {
+      const p = document.createElement("div"); p.className = "empty"; p.textContent = "No rows yet."; sec.appendChild(p);
+    } else {
+      const wrap = document.createElement("div"); wrap.className = "scroll";
+      const table = document.createElement("table");
+      const head = table.createTHead().insertRow();
+      for (const c of t.columns) { const th = document.createElement("th"); th.textContent = c; head.appendChild(th); }
+      const body = table.createTBody();
+      for (const row of t.rows) {
+        next[row.rowid] = row.values;
+        const old = prev[row.rowid];
+        const tr = body.insertRow();
+        if (animate && !old) tr.className = "new";
+        row.values.forEach((v, i) => tr.appendChild(cell(t.columns[i], v, animate && old && old[i] !== v)));
+      }
+      wrap.appendChild(table); sec.appendChild(wrap);
+      if (t.total > t.rows.length) {
+        const n = document.createElement("div"); n.className = "note";
+        n.textContent = `Showing the newest ${t.rows.length} of ${t.total} rows.`; sec.appendChild(n);
+      }
+      // Let highlights fade after they have been seen.
+      setTimeout(() => sec.querySelectorAll("tr.new, td.changed").forEach(e => {
+        e.classList.remove("new", "changed");
+      }), 2500);
+    }
+    seen[name] = next;
+  }
+  // Remove tables that no longer exist (for example after the database was reset).
+  for (const sec of [...holder.children]) {
+    if (!(sec.id.slice(2) in data.tables)) { sec.remove(); document.getElementById("tile-" + sec.id.slice(2))?.remove(); delete last[sec.id.slice(2)]; }
+  }
+}
+
+async function poll() {
+  if (busy) return;
+  busy = true;
+  const dot = document.getElementById("dot"), state = document.getElementById("state"), err = document.getElementById("error");
+  try {
+    const res = await fetch("/db", { cache: "no-store" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Backend returned ${res.status}`);
+    current = await res.json();
+    render(current, !first);
+    first = false;
+    dot.className = "dot live";
+    state.textContent = "live · read " + new Date().toLocaleTimeString();
+    document.getElementById("path").textContent = current.database;
+    err.style.display = "none";
+  } catch (e) {
+    dot.className = "dot down";
+    state.textContent = "reconnecting…";
+    err.textContent = "Can't read the database: " + e.message + ". Is the backend (python god-backend\\app.py) running?";
+    err.style.display = "block";
+  } finally {
+    busy = false;
+  }
+}
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>

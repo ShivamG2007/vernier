@@ -7,6 +7,7 @@ import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import actions
@@ -17,14 +18,15 @@ import store
 HOST = os.environ.get("VERNIER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VERNIER_PORT", "8000"))
 ADMIN_KEY = os.environ.get("VERNIER_ADMIN_KEY", "")
+DASHBOARD = Path(__file__).with_name("dashboard.html")
 CORS_ORIGINS = {s.strip() for s in os.environ.get(
     "VERNIER_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if s.strip()}
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_request(self, code="-", size="-"):
-        # The bridge polls every five seconds; keep normal request logging useful.
-        if self.command == "GET" and urlsplit(self.path).path == "/outbox" and code == 200:
+        # The bridge and the live view poll constantly; keep normal request logging useful.
+        if self.command == "GET" and urlsplit(self.path).path in {"/outbox", "/db"} and code == 200:
             return
         super().log_request(code, size)
 
@@ -42,6 +44,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if raw:
             self.wfile.write(raw)
+
+    def send_dashboard(self):
+        raw = DASHBOARD.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
 
     def do_OPTIONS(self):
         self.send_json(204, {})
@@ -74,9 +85,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.client_address[0] not in {"127.0.0.1", "::1"} and not self.require_privileged():
                 return
-            if path.path == "/":
+            if path.path in {"/", "/dashboard"} and (
+                    path.path == "/dashboard" or "text/html" in self.headers.get("Accept", "")):
+                if self.require_privileged():
+                    self.send_dashboard()
+            elif path.path == "/db":
+                if self.require_privileged():
+                    self.send_json(200, store.snapshot())
+            elif path.path == "/":
                 self.send_json(200, {"service": "Vernier master backend", "routes": [
-                    "GET /health", "GET /items", "GET /items/lost", "GET /items/unclaimed", "GET /events",
+                    "GET / (live database view in a browser)", "GET /db", "GET /health", "GET /items", "GET /items/lost", "GET /items/unclaimed", "GET /events",
                     "GET /listings", "GET /machines", "GET /bookings", "GET /outbox",
                     "GET /records/{table}", "POST /message", "POST /camera/item",
                     "POST /camera/item/{id}/removed", "POST /camera/machine",
@@ -205,6 +223,10 @@ def sync_outlook(every=60):
 if __name__ == "__main__":
     if HOST not in {"127.0.0.1", "::1", "localhost"} and not ADMIN_KEY:
         raise RuntimeError("Set VERNIER_ADMIN_KEY before binding outside localhost")
+    # Start every run empty so old reports and queued alerts are never sent again.
+    if os.environ.get("VERNIER_KEEP_DB") != "1":
+        store.reset_db()
+        print(f"Database cleared (previous run saved to {store.DB_PATH.stem}-previous.db)")
     store.init_db()
     print(f"Outlook room booking: {outlook.status()}")
     if outlook.ready() and not outlook.config().get("allowed_numbers"):

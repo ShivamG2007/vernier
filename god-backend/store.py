@@ -135,6 +135,39 @@ def init_db():
             ON bookings(outlook_id) WHERE outlook_id IS NOT NULL""")
 
 
+def snapshot(limit=500):
+    """Every table exactly as stored (newest rows first), for the live database view."""
+    with connect() as con:
+        tables = [r["name"] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        result = {}
+        for table in tables:
+            cur = con.execute(f'SELECT rowid, * FROM "{table}" ORDER BY rowid DESC LIMIT ?', (limit,))
+            result[table] = {
+                "columns": [d[0] for d in cur.description][1:],
+                "rows": [{"rowid": r[0], "values": list(r)[1:]} for r in cur],
+                "total": con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0],
+            }
+    return {"database": str(DB_PATH), "read_at": now(), "tables": result}
+
+
+def reset_db():
+    """Empty the database so each run starts fresh; the previous run is copied to *-previous.db."""
+    if not DB_PATH.exists():
+        return
+    backup = sqlite3.connect(DB_PATH.with_name(DB_PATH.stem + "-previous.db"))
+    try:
+        with connect() as con:
+            con.backup(backup)
+    finally:
+        backup.close()
+    with connect() as con:
+        tables = [r["name"] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        for table in tables:
+            con.execute(f'DROP TABLE "{table}"')
+
+
 def _text(value, limit, *, required=False):
     if value is None and not required:
         return None
