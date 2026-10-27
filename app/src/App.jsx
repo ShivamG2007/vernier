@@ -157,10 +157,33 @@ function Marketplace({ state }) {
     return matches.length ? <RecordList rows={matches} render={(row) => <div className="record-row listing-row" key={row.id}><div><strong>{row.item || 'Item not described'}</strong><span>{row.kind === 'buy' ? 'Wanted' : 'For sale'} · {row.status || 'open'}</span></div><b>{row.price || 'Price not listed'}</b></div>} /> : <EmptyState title="No matching listings" />
   }}</DataView><p className="footnote">Seller and buyer contacts stay private.</p></div>
 }
+const bookingStates = { booked: 'Booked', requested: 'Awaiting room', tentative: 'Tentative', declined: 'Declined', cancelled: 'Cancelled' }
+function activeBooking(row) { return !['declined', 'cancelled'].includes(row.status) }
+function bookingLabel(row) { return `${row.source === 'outlook' ? 'Outlook' : 'Vernier'} · ${bookingStates[row.status] || row.status || 'Booked'}` }
+function useOutlookStatus() {
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    let active = true
+    async function refresh() {
+      try {
+        const response = await fetch('/api/outlook', { cache: 'no-store' })
+        const body = response.ok ? await response.json() : null
+        if (active) setStatus(typeof body?.status === 'string' ? body.status : null)
+      } catch { if (active) setStatus(null) }
+    }
+    refresh()
+    const timer = setInterval(refresh, 30000)
+    return () => { active = false; clearInterval(timer) }
+  }, [])
+  return status
+}
 function Campus({ machines }) {
   const [day, setDay] = useState(() => dayKey(new Date()))
   const bookings = useRecords('bookings', day)
-  return <div className="division-content campus-content"><section><div className="content-heading"><h3>Machine observations</h3></div><DataView state={machines} empty="No machine observations yet">{(rows) => <RecordList rows={rows} render={(row) => <div className="record-row machine-row" key={row.id}><div><strong>{row.location || row.id || 'Machine'}</strong><span>{freshness(row.updated)}</span></div><small>{recentMachineReading(row) ? `Reported ${['free', 'in use'].includes(row.status) ? row.status : 'unknown'}` : 'Older observation'}</small></div>} />}</DataView><p className="footnote">These are last reported states, not live availability.</p></section><section><div className="content-heading"><h3>Room bookings</h3></div><label className="booking-day">Day <input type="date" value={day} onChange={(event) => setDay(event.target.value || dayKey(new Date()))} /></label><DataView state={bookings} empty="No local bookings for this day">{(rows) => <RecordList rows={rows} render={(row) => <div className="record-row" key={row.id}><div><strong>{row.room || 'Room'}</strong><span>{row.day || 'Day not listed'} · {row.start || '?'}–{row.end || '?'}</span></div></div>} />}</DataView><p className="footnote">Local booking records. Outlook is not connected.</p></section></div>
+  const outlookStatus = useOutlookStatus()
+  const outlookNote = outlookStatus?.startsWith('ready') ? 'Outlook is connected; its room bookings sync every minute.'
+    : outlookStatus ? `Outlook: ${outlookStatus}. Showing Vernier's own records.` : 'Outlook status unavailable.'
+  return <div className="division-content campus-content"><section><div className="content-heading"><h3>Machine observations</h3></div><DataView state={machines} empty="No machine observations yet">{(rows) => <RecordList rows={rows} render={(row) => <div className="record-row machine-row" key={row.id}><div><strong>{row.location || row.id || 'Machine'}</strong><span>{freshness(row.updated)}</span></div><small>{recentMachineReading(row) ? `Reported ${['free', 'in use'].includes(row.status) ? row.status : 'unknown'}` : 'Older observation'}</small></div>} />}</DataView><p className="footnote">These are last reported states, not live availability.</p></section><section><div className="content-heading"><h3>Room bookings</h3></div><label className="booking-day">Day <input type="date" value={day} onChange={(event) => setDay(event.target.value || dayKey(new Date()))} /></label><DataView state={bookings} empty="No bookings for this day">{(rows) => <RecordList rows={rows} render={(row) => <div className="record-row" key={row.id}><div><strong>{row.room || 'Room'}</strong><span>{row.day || 'Day not listed'} · {row.start || '?'}–{row.end || '?'}</span></div><small>{bookingLabel(row)}</small></div>} />}</DataView><p className="footnote">{outlookNote}</p></section></div>
 }
 function Profile({ session, preferences, onPreferencesChange, onRememberChange, onSignOut }) {
   const selected = preferences.interests
@@ -194,7 +217,7 @@ function Dashboard({ lost, events, listings, machines, bookings, onEventOpen, on
   const eventRows = (selectedDay ? events.data.filter((event) => dayKey(parseEventDate(event.date)) === selectedDay) : events.data).slice(0, 3)
   const listingRows = listings.data.slice(0, 3)
   const machineRows = machines.data.slice(0, 2)
-  const booking = bookings.data[0]
+  const booking = bookings.data.find(activeBooking)
   const lostCount = lost.phase === 'ready' ? lost.data.filter((row) => row.kind === 'lost' && row.status === 'open').length : null
   const foundCount = lost.phase === 'ready' ? lost.data.filter((row) => row.kind === 'found' && ['unclaimed', 'open'].includes(row.status)).length : null
   const freshMachines = machines.data.filter(recentMachineReading)
@@ -207,10 +230,10 @@ function Dashboard({ lost, events, listings, machines, bookings, onEventOpen, on
     <section className="bento-tile tile-events" aria-labelledby="events-tile-title"><a className="tile-cover" href="#events" onClick={onViewEvents} aria-label="Open events and clubs" /><div className="events-overview"><div className="tile-top"></div><h2 id="events-tile-title">Pinboard</h2><p className="tile-hint">{selectedDay ? `Events on ${new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short' }).format(new Date(`${selectedDay}T12:00:00`))}` : 'Latest event posts'}</p><TileData state={events} empty="No events posted yet">{() => eventRows.length ? <div className="tile-event-list" key={selectedDay || 'latest'}>{eventRows.map((event) => <button type="button" key={event.id} onClick={() => onEventOpen(event.id)}><span>{event.date || 'Date not listed'}</span><strong>{event.title || 'Untitled event'}</strong><small>{event.venue || 'Venue not listed'}</small></button>)}</div> : <span className="tile-status">No events on this date</span>}</TileData><a className="tile-link event-link" href="#events" onClick={onViewEvents}>See events <Icon name="arrow" size={17} /></a></div><EventCalendar month={month} onMonthChange={changeMonth} selectedDay={selectedDay} onSelectDay={selectDay} events={events.data} /></section>
     <a className="bento-tile tile-market" href="#marketplace"><span className="tile-ornament" aria-hidden="true"><Icon name="bag" size={64} /></span><div><h2>Earn or Spend $</h2><p className="tile-hint">Buy, sell or exchange on campus.</p></div><TileData state={listings} empty="No listings yet">{() => <div className="market-strip">{listingRows.map((row) => <div key={row.id}><strong>{row.item || 'Item not described'}</strong><span>{row.kind === 'buy' ? 'Wanted' : 'For sale'}</span><b>{row.price || 'Price not listed'}</b></div>)}</div>}</TileData><span className="tile-link">Browse listings <Icon name="arrow" size={17} /></span></a>
     <a className="bento-tile tile-laundry" href="#campus"><span className="tile-ornament tile-machine-art" aria-hidden="true"><Icon name="washer" size={68} /></span><div className="tile-stat-row"><span>Recent reports</span><div className="tile-stats"><StatPill value={inUseCount} label="in use" tone="blue" /><StatPill value={freeCount} label="free" tone="lime" /></div></div><div><h2>Machine reports</h2><p className="tile-hint">Last recorded observations.</p></div><TileData state={machines} empty="No observations yet">{() => <div className="machine-strip">{machineRows.map((row) => <div key={row.id}><span className={`machine-indicator${recentMachineReading(row) && row.status === 'free' ? ' is-recent-free' : ''}`} /><strong>{!recentMachineReading(row) ? 'Older report' : ['free', 'in use'].includes(row.status) ? `Reported ${row.status}` : 'Status unknown'}</strong><small>{row.location || row.id || 'Machine'} · {freshness(row.updated)}</small></div>)}</div>}</TileData><span className="tile-link">View machines <Icon name="arrow" size={17} /></span></a>
-    <a className="bento-tile tile-rooms" href="#campus"><span className="tile-ornament" aria-hidden="true"><Icon name="campus" size={70} /></span><div><h2>Ticketmaster</h2><p className="tile-hint">View local room bookings</p></div><TileData state={bookings} empty="No bookings yet">{() => <div className="room-record"><strong>{booking.room || 'Room'}</strong><span>{booking.day || 'Day not listed'} · {booking.start || '?'}–{booking.end || '?'}</span></div>}</TileData><span className="tile-link">View bookings <Icon name="arrow" size={17} /></span></a>
+    <a className="bento-tile tile-rooms" href="#campus"><span className="tile-ornament" aria-hidden="true"><Icon name="campus" size={70} /></span><div><h2>Ticketmaster</h2><p className="tile-hint">Today's room bookings</p></div><TileData state={bookings} empty="No bookings yet">{() => booking ? <div className="room-record"><strong>{booking.room || 'Room'}</strong><span>{booking.start || '?'}–{booking.end || '?'} · {bookingLabel(booking)}</span></div> : <span className="tile-status">No active bookings today</span>}</TileData><span className="tile-link">View bookings <Icon name="arrow" size={17} /></span></a>
     <div className="bento-tile tile-action"><div className="action-inline"><div><h2>Wanna talk on WhatsApp?</h2><p>Open WhatsApp, then choose your Vernier chat.</p></div><a className="tile-link" href="https://web.whatsapp.com/" target="_blank" rel="noopener noreferrer" aria-label="Open WhatsApp Web in a new tab">Chat now <Icon name="arrow" size={17} /></a></div></div>
     <a className="bento-tile tile-profile" href="#profile"><div><h2>Event alerts</h2><p>Choose interests and alert level.</p></div><span className="tile-link">Set preferences <Icon name="arrow" size={17} /></span></a>
-  </div><p className="dashboard-disclaimer">Records refresh when the backend is connected. Machine readings are observations; room bookings are local records.</p></div>
+  </div><p className="dashboard-disclaimer">Records refresh when the backend is connected. Machine readings are observations; room bookings include Outlook when it is connected.</p></div>
 }
 function DetailView({ page, content }) {
   const titles = { 'lost-found': 'Lost & found', events: 'Events & clubs', marketplace: 'Marketplace', campus: 'Campus', profile: 'Profile & preferences' }

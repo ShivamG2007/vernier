@@ -344,6 +344,37 @@ def upcoming(days=30):
     return [e for e in events if e.get("subject") == cfg["subject"]]
 
 
+def _event_room(event):
+    emails = {(l.get("locationEmailAddress") or "").lower() for l in event.get("locations", [])} - {""}
+    for room in rooms():
+        if room.get("email") and room["email"].lower() in emails:
+            return room
+    return find_room(event.get("location", {}).get("displayName"))
+
+
+def room_events(days=30):
+    """Every non-cancelled event at a configured room from today to `days` ahead, as booking rows."""
+    first = date.today()
+    last = first + timedelta(days=days)
+    start = datetime.combine(first, datetime.min.time()).astimezone()
+    end = datetime.combine(last + timedelta(days=1), datetime.min.time()).astimezone()
+    path = ("/me/calendarView?startDateTime=" + quote(start.isoformat(timespec="seconds")) +
+            "&endDateTime=" + quote(end.isoformat(timespec="seconds")) +
+            "&$select=id,start,end,location,locations,isCancelled&$top=100")
+    rows = []
+    while path:
+        data = _graph("GET", path)
+        for event in data.get("value", []):
+            room = _event_room(event)
+            if not room or event.get("isCancelled"):
+                continue
+            s, e = event["start"]["dateTime"], event["end"]["dateTime"]
+            rows.append({"outlook_id": event["id"], "room": room["name"], "day": s[:10],
+                         "start": s[11:16], "end": e[11:16] if e[:10] == s[:10] else "23:59"})
+        path = data.get("@odata.nextLink")
+    return rows, first.isoformat(), last.isoformat()
+
+
 def _cli(args):
     command = args[0] if args else "status"
     if command == "login":
@@ -365,10 +396,14 @@ def _cli(args):
         free = is_free(room, day, start, end)
         print(f"{room['name']} on {day} {start}-{end}: {'FREE' if free else 'BUSY'}")
         if command == "book" and free:
+            import store
+            store.init_db()
             event = book(room, day, start, end)
             if not is_room_mailbox(room):
+                store.log_outlook_booking(event["id"], room["name"], day, start, end, "terminal")
                 print(f"Booked in Outlook: {room['name']} on {day} {start}-{end}")
                 return
+            store.log_outlook_booking(event["id"], room["name"], day, start, end, "terminal", "requested")
             print(f"Booking sent. Waiting for {room['name']} to answer...")
             for _ in range(15):
                 time.sleep(6)
@@ -376,6 +411,9 @@ def _cli(args):
                 if response not in {"none", "notResponded"}:
                     break
             print(f"Room answered: {response}")
+            status = {"accepted": "booked", "tentativelyAccepted": "tentative", "declined": "declined"}
+            if response in status:
+                store.set_outlook_booking_status(event["id"], status[response])
             if response == "declined":
                 cancel(event["id"])
                 print("Removed the declined booking from your calendar.")
@@ -391,7 +429,10 @@ def _cli(args):
         n = int(args[1])
         if not 1 <= n <= len(events):
             sys.exit("No booking with that number. Run: python outlook.py upcoming")
+        import store
+        store.init_db()
         cancel(events[n - 1]["id"])
+        store.set_outlook_booking_status(events[n - 1]["id"], "cancelled")
         print(f"Cancelled booking {n}.")
     else:
         print(__doc__)

@@ -101,7 +101,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS bookings (
                 id INTEGER PRIMARY KEY, room TEXT NOT NULL, day TEXT NOT NULL,
                 start TEXT NOT NULL, end TEXT NOT NULL, booked_by TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'booked', created_at TEXT NOT NULL);
+                status TEXT NOT NULL DEFAULT 'booked', created_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'vernier', outlook_id TEXT);
             CREATE TABLE IF NOT EXISTS students (
                 contact TEXT PRIMARY KEY, interests TEXT NOT NULL, level TEXT NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1);
@@ -124,6 +125,14 @@ def init_db():
             if column not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 1")
                 con.execute(f"UPDATE {table} SET {column}=0")
+        # Outlook bookings are mirrored here so the app shows them next to Vernier's own.
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(bookings)")}
+        if "source" not in cols:
+            con.execute("ALTER TABLE bookings ADD COLUMN source TEXT NOT NULL DEFAULT 'vernier'")
+        if "outlook_id" not in cols:
+            con.execute("ALTER TABLE bookings ADD COLUMN outlook_id TEXT")
+        con.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_outlook
+            ON bookings(outlook_id) WHERE outlook_id IS NOT NULL""")
 
 
 def _text(value, limit, *, required=False):
@@ -413,17 +422,55 @@ def book_room(room, day, start, end, booked_by):
     with connect() as con:
         con.execute("BEGIN IMMEDIATE")
         overlap = con.execute("""SELECT 1 FROM bookings WHERE lower(room)=lower(?) AND day=?
-            AND status='booked' AND start<? AND end>? LIMIT 1""", (room, day, end, start)).fetchone()
+            AND status IN ('booked','requested','tentative') AND start<? AND end>? LIMIT 1""",
+            (room, day, end, start)).fetchone()
         if overlap:
             return None
         return con.execute("""INSERT INTO bookings(room,day,start,end,booked_by,created_at)
             VALUES (?,?,?,?,?,?)""", (room, day, start, end, _text(booked_by, 200) or "", now())).lastrowid
 
 
+def log_outlook_booking(outlook_id, room, day, start, end, booked_by, status="booked"):
+    """Record a booking that already exists in Outlook. Outlook decides overlaps, not this table."""
+    with connect() as con:
+        con.execute("""INSERT INTO bookings(room,day,start,end,booked_by,status,created_at,source,outlook_id)
+            VALUES (?,?,?,?,?,?,?,'outlook',?)
+            ON CONFLICT(outlook_id) WHERE outlook_id IS NOT NULL DO UPDATE SET
+            room=excluded.room, day=excluded.day, start=excluded.start, end=excluded.end,
+            booked_by=excluded.booked_by, status=excluded.status""",
+            (room, day, start, end, _text(booked_by, 200) or "", status, now(), outlook_id))
+        return con.execute("SELECT id FROM bookings WHERE outlook_id=?", (outlook_id,)).fetchone()["id"]
+
+
+def set_outlook_booking_status(outlook_id, status):
+    with connect() as con:
+        con.execute("UPDATE bookings SET status=? WHERE outlook_id=?", (status, outlook_id))
+
+
+def sync_outlook_bookings(events, first_day, last_day):
+    """Mirror Outlook room events for first_day..last_day; ones gone from Outlook become cancelled."""
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        for e in events:
+            row = con.execute("SELECT status FROM bookings WHERE outlook_id=?", (e["outlook_id"],)).fetchone()
+            if row:
+                con.execute("""UPDATE bookings SET room=?, day=?, start=?, end=?,
+                    status=CASE WHEN status='cancelled' THEN 'booked' ELSE status END WHERE outlook_id=?""",
+                    (e["room"], e["day"], e["start"], e["end"], e["outlook_id"]))
+            else:
+                con.execute("""INSERT INTO bookings(room,day,start,end,booked_by,status,created_at,source,outlook_id)
+                    VALUES (?,?,?,?,'outlook','booked',?,'outlook',?)""",
+                    (e["room"], e["day"], e["start"], e["end"], now(), e["outlook_id"]))
+        seen = [e["outlook_id"] for e in events]
+        con.execute(f"""UPDATE bookings SET status='cancelled' WHERE source='outlook'
+            AND day BETWEEN ? AND ? AND status IN ('booked','requested','tentative')
+            AND outlook_id NOT IN ({','.join('?' * len(seen))})""", (first_day, last_day, *seen))
+
+
 def list_bookings(day=None, room=None):
     day = day or datetime.now().date().isoformat()
     with connect() as con:
-        return [dict(r) for r in con.execute("""SELECT id,room,day,start,end,status FROM bookings
+        return [dict(r) for r in con.execute("""SELECT id,room,day,start,end,status,source FROM bookings
             WHERE day=? AND (? IS NULL OR lower(room)=lower(?)) ORDER BY start""", (day, room, room))]
 
 

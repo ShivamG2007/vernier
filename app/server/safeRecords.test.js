@@ -66,6 +66,26 @@ test('forwards booking day and keeps only that day', async (t) => {
   assert.equal(result.body[0].booked_by, undefined)
 })
 
+test('keeps booking source and status but not the Outlook event id', () => {
+  const row = publicRecord('bookings', { id: 5, room: 'MR-2', day: '2026-10-29', start: '15:00', end: '16:00',
+    status: 'requested', source: 'outlook', outlook_id: 'AAMk-secret', booked_by: '919876543210@c.us' })
+  assert.equal(row.source, 'outlook')
+  assert.equal(row.status, 'requested')
+  assert.equal(row.outlook_id, undefined)
+  assert.equal(row.booked_by, undefined)
+})
+
+test('passes on only the Outlook status from health', async (t) => {
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (url) => {
+    assert.equal(url.pathname, '/health')
+    return { ok: true, status: 200, json: async () => ({ backend: 'ok', outlook: 'ready (manual token)', ollama: 'ok' }) }
+  }
+  const result = await request('/api/outlook', safeRecordsMiddleware({ backendUrl: 'http://localhost:8000' }))
+  assert.deepEqual(result.body, { status: 'ready (manual token)' })
+})
+
 test('keeps the older records API as a read-only fallback', async (t) => {
   const original = globalThis.fetch
   t.after(() => { globalThis.fetch = original })

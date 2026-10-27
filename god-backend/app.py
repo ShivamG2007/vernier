@@ -4,6 +4,8 @@ import hmac
 import json
 import os
 import re
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -183,6 +185,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(503, {"error": "Model or backend unavailable; check Ollama and try again"})
 
 
+def sync_outlook(every=60):
+    """Keep the bookings table in step with Outlook so the app shows every room booking."""
+    last_error = None
+    while True:
+        if outlook.ready():
+            try:
+                store.sync_outlook_bookings(*outlook.room_events())
+                if last_error:
+                    print("Outlook sync working again.")
+                last_error = None
+            except Exception as exc:
+                if str(exc) != last_error:
+                    print(f"Outlook sync failed: {exc}")
+                last_error = str(exc)
+        time.sleep(every)
+
+
 if __name__ == "__main__":
     if HOST not in {"127.0.0.1", "::1", "localhost"} and not ADMIN_KEY:
         raise RuntimeError("Set VERNIER_ADMIN_KEY before binding outside localhost")
@@ -190,5 +209,6 @@ if __name__ == "__main__":
     print(f"Outlook room booking: {outlook.status()}")
     if outlook.ready() and not outlook.config().get("allowed_numbers"):
         print("  Warning: allowed_numbers is empty, so anyone who messages the bot can book rooms.")
+    threading.Thread(target=sync_outlook, daemon=True).start()
     print(f"Vernier master backend listening at http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

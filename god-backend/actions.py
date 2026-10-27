@@ -218,23 +218,22 @@ def _book_in_outlook(room_text, text, day, start, end, author, direct):
     except outlook.OutlookError as exc:
         print(f"Outlook booking failed: {exc}")
         return f"I couldn't book {room['name']} in Outlook right now ({exc}).", None
-    try:
-        booking_id = store.book_room(room["name"], day, start, end, author)
-    except ValueError:
-        booking_id = None
-    if not outlook.is_room_mailbox(room):
+    mailbox = outlook.is_room_mailbox(room)
+    booking_id = store.log_outlook_booking(event["id"], room["name"], day, start, end, author,
+                                           "requested" if mailbox else "booked")
+    if not mailbox:
         return f"Booked in Outlook: {when}.", {"id": booking_id, "outlook": "booked"}
 
     def on_result(response):
         if response == "accepted":
             message = f"Confirmed in Outlook: {when}."
+            store.set_outlook_booking_status(event["id"], "booked")
         elif response == "tentativelyAccepted":
             message = f"{when} is tentatively accepted and waiting for approval in Outlook."
+            store.set_outlook_booking_status(event["id"], "tentative")
         elif response == "declined":
             message = f"The room declined {when}, so I removed the booking. Try another time or room."
-            if booking_id:
-                with store.connect() as con:
-                    con.execute("UPDATE bookings SET status='declined' WHERE id=?", (booking_id,))
+            store.set_outlook_booking_status(event["id"], "declined")
         else:
             message = f"{room['name']} hasn't answered yet for {when}. It may need approval; check Outlook."
         if author:
