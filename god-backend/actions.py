@@ -30,33 +30,6 @@ CAMERA_RULE = re.compile(
 UNRESOLVED_LOST_RULE = re.compile(
     r"\b(?:lost|missing)\b.{0,50}\b(?:not found|still missing|unresolved|not recovered)\b|"
     r"\b(?:not found|still missing|unresolved|not recovered)\b.{0,50}\b(?:lost|missing)\b", re.I)
-BUY_RULE = re.compile(
-    r"\b(?:any ?(?:one|body)|koi|kisi)\b[^.?!]{0,25}\b(?:sell|selling|bech\w*)\b|"
-    r"\b(?:want|need|looking) to buy\b|\bkhareed", re.I)
-LISTINGS_RULE = re.compile(
-    r"\b(?:what|which|any|kya|koi)\b[^.!]{0,40}\bfor sale\b|\blisted\b[^.!]{0,30}\bfor sale\b|"
-    r"\bwhat'?s\s+(?:for sale|available)\b|\bdala hai kya\b|\b(?:show|list)\b[^.!]{0,15}\blistings?\b", re.I)
-LOST_RULE = re.compile(r"\b(?:kho|gir)\s*(?:gaya|gayi|gya|gyi|gai|gaye)\b|\blost my\b", re.I)
-FOUND_RULE = re.compile(
-    r"\bkisi\s+ka\b[^?]{0,60}\b(?:mila|mili|mile)\b|"
-    r"\b(?:mila|mili|mile)\s+(?:hai|h|he|hain)\b[^?]{0,30}\bkisi\s+ka\b|"
-    r"^\s*(?:i\s+)?found\s+(?:a|an|some|this|these|someone'?s)\b", re.I)
-BOOK_RULE = re.compile(r"^\s*(?:please\s+|pls\s+|can you\s+)?book\b", re.I)
-ROOM_RULE = re.compile(r"\b(?:room|hall|lab|auditorium)\b", re.I)
-LAUNDRY_RULE = re.compile(r"\b(?:wash\w*|machine|laundry|dryer)\b", re.I)
-WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-CATEGORY_WORDS = [
-    ("sports", r"football|cricket|basketball|volleyball|badminton|kabaddi|athletics|sports?|tournament|match"),
-    ("dance", r"dance|dancing"),
-    ("music", r"music|singing|band|open mic|concert"),
-    ("theatre", r"drama|theatre|theater|nukkad|natak"),
-    ("tech", r"hackathon|coding|tech|robotics|programming"),
-    ("academic", r"seminar|lecture|quiz|exam|workshop"),
-    ("culture", r"fest|cultural|garba|diwali|holi"),
-]
-TIME_RANGE = re.compile(
-    r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.I)
-ONE_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat\s+(\d{1,2})(?::(\d{2}))?\b", re.I)
 
 TEAM_ACTIONS = {
     "lost_report": "report_lost", "found_report": "report_found", "ask_lost": "search_found",
@@ -99,9 +72,10 @@ def _record_reply(question, records, scope, fallback):
 
 
 def _summary(row):
+    color = row.get("color") or ""
     name = row.get("item") or row.get("name") or "item"
     place = row.get("place") or row.get("foundAt")
-    label = store.item_label(row.get("color"), name)
+    label = " ".join(part for part in (color, name) if part)
     return f"#{row['id']} {label}" + (f" at {place}" if place else "")
 
 
@@ -128,64 +102,6 @@ def _day(value, text):
     if re.search(r"\btoday\b|\baaj\b", text, re.I):
         return date.today().isoformat()
     return None
-
-
-def _text_day(text):
-    # Day words in the message beat the model's date, which is often just today's date.
-    day = _day(None, text)
-    if day:
-        return day
-    if re.search(r"\btonight\b", text, re.I):
-        return date.today().isoformat()
-    for i, name in enumerate(WEEKDAYS):
-        if re.search(rf"\b{name}\b", text, re.I):
-            return (date.today() + timedelta(days=(i - date.today().weekday()) % 7)).isoformat()
-    return None
-
-
-def _event_date(value, text):
-    return _text_day(text) or _explicit_text(value, text, 100)
-
-
-def _with_weekday(value):
-    try:
-        return f"{value} ({date.fromisoformat(value):%A})"
-    except (TypeError, ValueError):
-        return value
-
-
-def _category(value, text):
-    if value in model.CATEGORIES and value != "other":
-        return value
-    for category, words in CATEGORY_WORDS:
-        if re.search(rf"\b(?:{words})\b", text, re.I):
-            return category
-    return "other"
-
-
-def _clock(hour, minute, half):
-    hour, minute = int(hour), int(minute or 0)
-    if half:
-        hour = hour % 12 + (12 if half.casefold() == "pm" else 0)
-    elif hour < 8:
-        hour += 12  # "at 5" for a campus room means 5 PM
-    return f"{hour:02d}:{minute:02d}" if hour < 24 and minute < 60 else None
-
-
-def _times(text):
-    # The model often leaves start/end empty, so read times like "3 to 4pm" or "at 5pm" directly.
-    match = TIME_RANGE.search(text)
-    if match:
-        h1, m1, a1, h2, m2, a2 = match.groups()
-        start, end = _clock(h1, m1, a1 or a2), _clock(h2, m2, a2)
-        if start and end:
-            return start, end
-    match = ONE_TIME.search(text)
-    if match:
-        start = _clock(*match.groups()[:3]) if match.group(1) else _clock(match.group(4), match.group(5), None)
-        if start:
-            return start, f"{(int(start[:2]) + 1) % 24:02d}{start[2:]}"
-    return None, None
 
 
 def _handle_message(payload, planner=None):
@@ -260,18 +176,6 @@ def _handle_message(payload, planner=None):
         action = "chat"
     if action == "list_unclaimed_found" and UNRESOLVED_LOST_RULE.search(text):
         action = "list_open_lost"
-    if action == "sell_post" and BUY_RULE.search(text):
-        action = "buy_request"
-    if action in {"sell_post", "buy_request", "chat"} and LISTINGS_RULE.search(text):
-        action = "ask_listings"
-    if action in {"search_found", "list_unclaimed_found", "ask_room", "chat"} and LOST_RULE.search(text):
-        action = "report_lost"
-    elif action in {"search_found", "list_unclaimed_found", "chat"} and FOUND_RULE.search(text):
-        action = "report_found"
-    if action == "ask_laundry" and ROOM_RULE.search(text) and not LAUNDRY_RULE.search(text):
-        action = "ask_room"
-    if action == "ask_room" and BOOK_RULE.search(text):
-        action = "book_room"
 
     item = _field(proposal.get("item"), 120)
     color = _explicit_text(proposal.get("color", proposal.get("colour")), text, 60)
@@ -294,7 +198,7 @@ def _handle_message(payload, planner=None):
                 image_href=image_href, please_consult_this_person=consult,
                 source="chat", reporter=author)
             extra = {"id": item_id}
-            fact = f"Earlier reported {kind} {store.item_label(color, item)} as item #{item_id}"
+            fact = f"Earlier reported {kind} {' '.join(v for v in (color, item) if v)} as item #{item_id}"
             if kind == "found":
                 matches = store.find_matches(item_id)
                 alerted = store.alert_lost_reporters(item_id)
@@ -327,7 +231,7 @@ def _handle_message(payload, planner=None):
         if rows:
             lines = []
             for row in rows[:30]:
-                label = store.item_label(row["color"], row["item"])
+                label = " ".join(v for v in (row["color"], row["item"]) if v)
                 place = f" (last reported near {row['place']})" if row["place"] else ""
                 lines.append(f"#{row['id']} {label}{place}")
             reply = "Items reported lost and still open:\n" + "\n".join(lines)
@@ -336,12 +240,10 @@ def _handle_message(payload, planner=None):
         else:
             reply = "There are no unresolved lost-item reports recorded."
     elif action == "event_post":
-        # The model usually puts the event name in "item" and leaves category empty.
-        title = (_explicit_text(proposal.get("title"), text, 160) or
-                 _explicit_text(proposal.get("item"), text, 160) or text[:160])
-        category = _category(proposal.get("category"), text)
+        title = _explicit_text(proposal.get("title"), text, 160) or text[:160]
+        category = proposal.get("category") if proposal.get("category") in model.CATEGORIES else "other"
         event_id = store.add_event(title=title, category=category,
-            date=_event_date(proposal.get("date"), text),
+            date=_explicit_text(proposal.get("date"), text, 100),
             venue=_explicit_text(proposal.get("venue"), text, 120),
             details=text, major=proposal.get("major") is True,
             source=_field(payload.get("chat_name"), 200) if is_group else author)
@@ -349,13 +251,10 @@ def _handle_message(payload, planner=None):
         reply = f"Event recorded under {category}. Interested students will receive an alert."
     elif action == "ask_events":
         events = store.list_events()
-        public_events = [{k: _with_weekday(row[k]) if k == "date" else row[k]
-                          for k in ("id", "title", "category", "date", "venue", "major")}
+        public_events = [{k: row[k] for k in ("id", "title", "category", "date", "venue", "major")}
                          for row in events]
         fallback = "Recorded events: " + "; ".join(row["title"] for row in events[:5]) + "." if events else "I don't have any events recorded yet."
-        # The model can't work out weekdays itself, so give it today's date and each event's weekday.
-        records = {"today": _with_weekday(date.today().isoformat()), "events": public_events}
-        reply = _record_reply(text, records, "recorded events", fallback) if events else fallback
+        reply = _record_reply(text, public_events, "recorded events", fallback) if events else fallback
     elif action in {"sell_post", "buy_request"}:
         if not item:
             reply = "Tell me which item you're buying or selling."
@@ -365,24 +264,17 @@ def _handle_message(payload, planner=None):
                 price=_explicit_text(proposal.get("price"), text, 80),
                 details=text, contact=author)
             extra = {"id": listing_id}
-            if kind == "buy" and matches:
-                reply = "Listing recorded. Already for sale: " + "; ".join(
-                    m["item"] + (f" ({m['price']})" if m["price"] else "") for m in matches[:5]) + "."
-            else:
-                reply = "Listing recorded." + (f" {len(matches)} possible match(es) found." if matches else "")
+            reply = "Listing recorded." + (f" {matches} possible match(es) found." if matches else "")
     elif action == "ask_listings":
         listings = store.list_listings()
-        public_listings = [{"id": row["id"], "item": row["item"],
-                            "type": "for sale" if row["kind"] == "sell" else "wanted by a buyer",
-                            "price": f"₹{row['price']}" if (row["price"] or "").isdigit() else row["price"]}
+        public_listings = [{k: row[k] for k in ("id", "kind", "item", "price")}
                            for row in listings]
         fallback = "Open listings: " + "; ".join(
             f"{row['kind']} {row['item']}" for row in listings[:5]) + "." if listings else "I don't have any open listings recorded yet."
         reply = _record_reply(text, public_listings, "open buy and sell listings", fallback) if listings else fallback
     elif action == "ask_room":
-        day = (_text_day(text) or _day(proposal.get("day") or proposal.get("date"), text)
-               or date.today().isoformat())
-        room = _field(proposal.get("room"), 120) or _field(proposal.get("item"), 120) or None
+        day = _day(proposal.get("day"), text) or date.today().isoformat()
+        room = _field(proposal.get("room"), 120) or None
         bookings = store.list_bookings(day, room)
         if bookings:
             reply = "Vernier bookings: " + "; ".join(
@@ -390,12 +282,9 @@ def _handle_message(payload, planner=None):
         else:
             reply = "No booking is recorded in Vernier for that room and day. Confirm availability with campus staff."
     elif action == "book_room":
-        # The model usually puts the room in "item" and the day in "date".
-        room = _field(proposal.get("room"), 120) or _field(proposal.get("item"), 120)
-        day = _text_day(text) or _day(proposal.get("day") or proposal.get("date"), text)
-        start, end = _times(text)
-        if not (start and end):
-            start, end = _field(proposal.get("start"), 5), _field(proposal.get("end"), 5)
+        room = _field(proposal.get("room"), 120)
+        day = _day(proposal.get("day"), text)
+        start, end = _field(proposal.get("start"), 5), _field(proposal.get("end"), 5)
         if not (room and day and start and end):
             reply = "Please give a room, day, start time and end time to book it."
         else:
