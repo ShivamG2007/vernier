@@ -185,6 +185,10 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     if HOST not in {"127.0.0.1", "::1", "localhost"} and not ADMIN_KEY:
         raise RuntimeError("Set VERNIER_ADMIN_KEY before binding outside localhost")
+    # Start every run empty so old reports and queued alerts are never sent again.
+    if os.environ.get("VERNIER_KEEP_DB") != "1":
+        store.reset_db()
+        print(f"Database cleared (previous run saved to {store.DB_PATH.stem}-previous.db)")
     store.init_db()
     print(f"Vernier master backend listening at http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

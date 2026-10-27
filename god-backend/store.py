@@ -47,6 +47,23 @@ def _create_items(con, name="items"):
     )""")
 
 
+def reset_db():
+    """Empty the database so each run starts fresh; the previous run is copied to *-previous.db."""
+    if not DB_PATH.exists():
+        return
+    backup = sqlite3.connect(DB_PATH.with_name(DB_PATH.stem + "-previous.db"))
+    try:
+        with connect() as con:
+            con.backup(backup)
+    finally:
+        backup.close()
+    with connect() as con:
+        tables = [r["name"] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        for table in tables:
+            con.execute(f'DROP TABLE "{table}"')
+
+
 def init_db():
     """Create feature tables and migrate older local item records without deleting them."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)

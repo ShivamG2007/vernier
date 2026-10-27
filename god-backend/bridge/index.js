@@ -7,7 +7,8 @@ function dependency(name) {
 const { Client, LocalAuth } = dependency('whatsapp-web.js');
 const qrcode = dependency('qrcode-terminal');
 
-const BACKEND_URL = (process.env.BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const STARTED_AT = Math.floor(Date.now() / 1000);
+const BACKEND_URL =(process.env.BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 const ENABLE_GROUPS = process.env.VERNIER_ENABLE_GROUPS === '1';
 const ADMIN_KEY = process.env.VERNIER_ADMIN_KEY || '';
 const BROWSER_PATH = [
@@ -60,6 +61,8 @@ client.on('message', async message => {
   const isGroup = from.endsWith('@g.us');
   if (message.fromMe || !message.body || from.endsWith('@broadcast') ||
       from.endsWith('@newsletter') || (isGroup && !ENABLE_GROUPS)) return;
+  // WhatsApp replays messages that arrived while Vernier was off; only answer new ones.
+  if (message.timestamp && message.timestamp < STARTED_AT) return;
   try {
     let chatName = '';
     if (isGroup) {
