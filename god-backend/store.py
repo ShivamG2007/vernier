@@ -47,6 +47,22 @@ def _create_items(con, name="items"):
     )""")
 
 
+def snapshot(limit=500):
+    """Every table exactly as stored (newest rows first), for the live database view."""
+    with connect() as con:
+        tables = [r["name"] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        result = {}
+        for table in tables:
+            cur = con.execute(f'SELECT rowid, * FROM "{table}" ORDER BY rowid DESC LIMIT ?', (limit,))
+            result[table] = {
+                "columns": [d[0] for d in cur.description][1:],
+                "rows": [{"rowid": r[0], "values": list(r)[1:]} for r in cur],
+                "total": con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0],
+            }
+    return {"database": str(DB_PATH), "read_at": now(), "tables": result}
+
+
 def reset_db():
     """Empty the database so each run starts fresh; the previous run is copied to *-previous.db."""
     if not DB_PATH.exists():
