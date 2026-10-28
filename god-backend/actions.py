@@ -33,7 +33,9 @@ UNRESOLVED_LOST_RULE = re.compile(
     r"\b(?:not found|still missing|unresolved|not recovered)\b.{0,50}\b(?:lost|missing)\b", re.I)
 BUY_RULE = re.compile(
     r"\b(?:any ?(?:one|body)|koi|kisi)\b[^.?!]{0,25}\b(?:sell|selling|bech\w*)\b|"
-    r"\b(?:want|need|looking) to buy\b|\bkhareed", re.I)
+    r"\b(?:want|need|looking) to buy\b|\bkhareed|"
+    # "buying a calculator" / "buy cycle": mentions buying and never selling.
+    r"^(?!.*\b(?:sell|selling|bech\w*)\b).*\bbuy(?:ing)?\b", re.I | re.S)
 LISTINGS_RULE = re.compile(
     r"\b(?:what|which|any|kya|koi)\b[^.!]{0,40}\bfor sale\b|\blisted\b[^.!]{0,30}\bfor sale\b|"
     r"\bwhat'?s\s+(?:for sale|available)\b|\bdala hai kya\b|\b(?:show|list)\b[^.!]{0,15}\blistings?\b", re.I)
@@ -218,23 +220,22 @@ def _book_in_outlook(room_text, text, day, start, end, author, direct):
     except outlook.OutlookError as exc:
         print(f"Outlook booking failed: {exc}")
         return f"I couldn't book {room['name']} in Outlook right now ({exc}).", None
-    try:
-        booking_id = store.book_room(room["name"], day, start, end, author)
-    except ValueError:
-        booking_id = None
-    if not outlook.is_room_mailbox(room):
+    mailbox = outlook.is_room_mailbox(room)
+    booking_id = store.log_outlook_booking(event["id"], room["name"], day, start, end, author,
+                                           "requested" if mailbox else "booked")
+    if not mailbox:
         return f"Booked in Outlook: {when}.", {"id": booking_id, "outlook": "booked"}
 
     def on_result(response):
         if response == "accepted":
             message = f"Confirmed in Outlook: {when}."
+            store.set_outlook_booking_status(event["id"], "booked")
         elif response == "tentativelyAccepted":
             message = f"{when} is tentatively accepted and waiting for approval in Outlook."
+            store.set_outlook_booking_status(event["id"], "tentative")
         elif response == "declined":
             message = f"The room declined {when}, so I removed the booking. Try another time or room."
-            if booking_id:
-                with store.connect() as con:
-                    con.execute("UPDATE bookings SET status='declined' WHERE id=?", (booking_id,))
+            store.set_outlook_booking_status(event["id"], "declined")
         else:
             message = f"{room['name']} hasn't answered yet for {when}. It may need approval; check Outlook."
         if author:
@@ -423,10 +424,13 @@ def _handle_message(payload, planner=None):
                 details=text, contact=author)
             extra = {"id": listing_id}
             if kind == "buy" and matches:
-                reply = "Listing recorded. Already for sale: " + "; ".join(
+                reply = f"Buy request recorded for {item}. Already for sale: " + "; ".join(
                     m["item"] + (f" ({m['price']})" if m["price"] else "") for m in matches[:5]) + "."
+            elif kind == "buy":
+                reply = f"Buy request recorded for {item}. Nothing matching is for sale yet; I'll message you when someone lists one."
             else:
-                reply = "Listing recorded." + (f" {len(matches)} possible match(es) found." if matches else "")
+                reply = f"Listed {item} for sale." + (
+                    f" {len(matches)} buyer(s) are looking for this and will be told." if matches else "")
     elif action == "ask_listings":
         listings = store.list_listings()
         public_listings = [{"id": row["id"], "item": row["item"],

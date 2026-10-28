@@ -8,7 +8,6 @@ const { Client, LocalAuth } = dependency('whatsapp-web.js');
 const qrcode = dependency('qrcode-terminal');
 
 const BACKEND_URL = (process.env.BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
-const ENABLE_GROUPS = process.env.VERNIER_ENABLE_GROUPS === '1';
 const ADMIN_KEY = process.env.VERNIER_ADMIN_KEY || '';
 const BROWSER_PATH = [
   process.env.VERNIER_BROWSER_PATH,
@@ -38,6 +37,24 @@ async function callBackend(route, options = {}) {
   return data;
 }
 
+// The backend's VERNIER_ENABLE_GROUPS is the only group switch; the bridge follows it
+// so the two can never disagree. Re-checked often because the backend may restart.
+let groupsOn = null;
+async function refreshGroups() {
+  try {
+    const on = (await callBackend('/health')).groups_enabled === true;
+    if (on !== groupsOn) {
+      console.log(on ? 'Groups: on'
+        : 'Groups: off. To turn them on, set $env:VERNIER_ENABLE_GROUPS="1" in the backend window and restart the backend.');
+    }
+    groupsOn = on;
+  } catch (error) {
+    if (groupsOn === null) console.error('Could not ask the backend whether groups are on:', error.message);
+  }
+}
+refreshGroups();
+setInterval(refreshGroups, 15000);
+
 async function isMentioned(message) {
   const me = client.info?.wid?.user;
   try {
@@ -59,7 +76,7 @@ client.on('message', async message => {
   const from = message.from || '';
   const isGroup = from.endsWith('@g.us');
   if (message.fromMe || !message.body || from.endsWith('@broadcast') ||
-      from.endsWith('@newsletter') || (isGroup && !ENABLE_GROUPS)) return;
+      from.endsWith('@newsletter') || (isGroup && !groupsOn)) return;
   try {
     let chatName = '';
     if (isGroup) {
@@ -77,6 +94,11 @@ client.on('message', async message => {
         text: message.body,
       }),
     });
+    if (data.action === 'ignored_group') {
+      // The backend turned groups off since the last check; follow it straight away.
+      await refreshGroups();
+      return;
+    }
     if (data.reply && !data.duplicate) await message.reply(data.reply);
     console.log(`${isGroup ? 'Group' : 'DM'} handled: ${data.action}${data.duplicate ? ' (duplicate)' : ''}`);
   } catch (error) {
@@ -113,7 +135,7 @@ async function sendOutbox() {
 }
 
 client.on('ready', () => {
-  console.log(`Vernier is connected. Backend: ${BACKEND_URL}. Groups: ${ENABLE_GROUPS ? 'on' : 'off'}`);
+  console.log(`Vernier is connected. Backend: ${BACKEND_URL}. Groups: ${groupsOn === null ? 'unknown (backend not reachable yet)' : groupsOn ? 'on' : 'off'}`);
   sendOutbox();
   setInterval(sendOutbox, 5000);
 });

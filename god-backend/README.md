@@ -44,7 +44,7 @@ cd C:\Vernier\god-backend\bridge
 node index.js
 ```
 
-If the existing bot's dependencies are unavailable, run `npm install` in `god-backend\bridge` first. The bridge uses `BACKEND_URL` (default `http://127.0.0.1:8000`). To process known demo groups, set `VERNIER_ENABLE_GROUPS=1` in **both** backend and bridge PowerShell windows before starting them. Keep it off until the team has agreed on group participation and consent.
+If the existing bot's dependencies are unavailable, run `npm install` in `god-backend\bridge` first. The bridge uses `BACKEND_URL` (default `http://127.0.0.1:8000`). To process known demo groups, set `VERNIER_ENABLE_GROUPS=1` in the **backend** window before starting it. The bridge asks the backend and follows its setting, so it needs nothing. Keep it off until the team has agreed on group participation and consent.
 
 The bridge uses an installed Chrome or Edge executable if Puppeteer's own browser is missing. Set `VERNIER_BROWSER_PATH` before `node index.js` only if your browser is installed somewhere else.
 

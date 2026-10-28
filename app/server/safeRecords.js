@@ -15,7 +15,7 @@ const allowed = {
   events: ['id', 'title', 'category', 'date', 'venue', 'major', 'created'],
   listings: ['id', 'kind', 'item', 'price', 'status', 'created'],
   machines: ['id', 'location', 'status', 'updated'],
-  bookings: ['id', 'room', 'day', 'start', 'end', 'status'],
+  bookings: ['id', 'room', 'day', 'start', 'end', 'status', 'source'],
 }
 
 function cleanText(value, max = 160) {
@@ -52,9 +52,25 @@ function send(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
+// Only the backend's Outlook state string leaves /health; nothing else is passed on.
+async function outlookStatus(res, backendUrl, adminKey) {
+  if (!backendUrl) return send(res, 503, { error: 'Backend URL is not configured' })
+  try {
+    const headers = { Accept: 'application/json' }
+    if (adminKey) headers['X-Vernier-Key'] = adminKey
+    const health = new URL('health', `${new URL(backendUrl).href.replace(/\/$/, '')}/`)
+    const response = await fetch(health, { signal: AbortSignal.timeout(4500), headers })
+    const body = response.ok ? await response.json() : null
+    return send(res, 200, { status: cleanText(body?.outlook, 60) || 'off' })
+  } catch {
+    return send(res, 502, { error: 'Backend unavailable' })
+  }
+}
+
 export function safeRecordsMiddleware({ backendUrl, adminKey = '' } = {}) {
   return async (req, res, next) => {
     const path = req.url?.split('?')[0]
+    if (path === '/api/outlook') return outlookStatus(res, backendUrl, adminKey)
     if (!path?.startsWith('/api/records/')) return next()
     const table = path.slice('/api/records/'.length)
     const collection = collections[table]
