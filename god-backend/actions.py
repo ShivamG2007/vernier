@@ -495,7 +495,8 @@ def _handle_message(payload, planner=None):
     else:
         if planner is model.plan_message:
             try:
-                reply = model.chat_reply(text, context)
+                reply = (model.chat_reply(text, context)
+                         or "Ask me about lost items, events, listings, rooms or laundry.")
             except TimeoutError:
                 raise
             except Exception as exc:
