@@ -100,13 +100,18 @@ Group messages that don't tag the bot never create bookings.
 
 1. Open https://developer.microsoft.com/graph/graph-explorer and sign in with your college account.
 2. Run any request, then open the **Access token** tab and copy the token.
-3. In the backend window, before starting it:
+3. In any window (the backend can already be running):
    ```powershell
-   $env:VERNIER_OUTLOOK_TOKEN="paste-token-here"
-   python god-backend\app.py
+   cd "C:\Users\Shivam Ghosh\Documents\Haha i do coding i am cool\Vernier\god-backend"
+   python outlook.py token
    ```
+   Paste the token when asked. It is checked with Outlook, then saved in `outlook_manual_token.txt`
+   (ignored by Git; anyone with it can book as you for the next hour). The backend reads it on every
+   request, so there is nothing to set when starting the backend and no restart after a new token.
 
-The token expires after about an hour, so get a fresh one just before the demo.
+The token expires after about an hour. When it does, the backend prints "token expired" and books
+in Vernier's own table until you run `python outlook.py token` again with a fresh one.
+To avoid the hourly token altogether, do the one-time app sign-in (steps 1-3 at the top).
 Graph Explorer must have `Calendars.ReadWrite` consented (Modify permissions tab).
 `outlook_config.json` still needs the `rooms` list in this mode.
 

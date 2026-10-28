@@ -2,6 +2,7 @@
 
 Setup and commands: see OUTLOOK_SETUP.md
     python outlook.py login        sign in once with the college Microsoft account
+    python outlook.py token        save a Graph Explorer token instead (lasts about an hour)
     python outlook.py status       who is signed in and which rooms are configured
     python outlook.py check MR-2 2026-10-29 15:00 16:00
     python outlook.py book  MR-2 2026-10-29 15:00 16:00
@@ -24,10 +25,12 @@ from urllib.parse import quote
 HERE = Path(__file__).resolve().parent
 CONFIG_FILE = Path(os.environ.get("VERNIER_OUTLOOK_CONFIG", HERE / "outlook_config.json"))
 TOKEN_FILE = Path(os.environ.get("VERNIER_OUTLOOK_TOKEN_FILE", HERE / "outlook_token.json"))
+MANUAL_TOKEN_FILE = Path(os.environ.get("VERNIER_OUTLOOK_MANUAL_TOKEN_FILE", HERE / "outlook_manual_token.txt"))
 GRAPH = "https://graph.microsoft.com/v1.0"
 SCOPES = ["Calendars.ReadWrite", "User.Read"]
 _lock = threading.Lock()
 _cached = {"key": None, "app": None, "cache": None}
+_expired = {"token": None}  # the pasted token Outlook last rejected, so status() can say so
 
 
 class OutlookError(Exception):
@@ -52,7 +55,20 @@ def config():
 
 
 def _manual_token():
-    return os.environ.get("VERNIER_OUTLOOK_TOKEN", "").strip()
+    """A pasted Graph Explorer token. Read on every call, so a fresh one works without a restart."""
+    try:
+        saved = MANUAL_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        saved = ""
+    return saved or os.environ.get("VERNIER_OUTLOOK_TOKEN", "").strip()
+
+
+def save_manual_token(token):
+    token = token.strip().removeprefix("Bearer ").strip()
+    if len(token) < 100 or any(c.isspace() for c in token):
+        raise OutlookError("That doesn't look like an access token. Copy the whole Access token from Graph Explorer.")
+    MANUAL_TOKEN_FILE.write_text(token, encoding="utf-8")
+    _expired["token"] = None
 
 
 def status():
@@ -64,7 +80,10 @@ def status():
         return "off"
     if any("PASTE" in str(r.get("email", "")) for r in cfg["rooms"]):
         return "room emails not filled in"
-    if _manual_token():
+    manual = _manual_token()
+    if manual and manual == _expired["token"]:
+        return "token expired (paste a new one: python outlook.py token)"
+    if manual:
         return "ready (manual token)"
     if not cfg.get("client_id") or "PASTE" in cfg["client_id"]:
         return "missing client_id"
@@ -143,11 +162,12 @@ def login():
 
 def _graph(method, path, body=None, timeout=15):
     tz = config().get("timezone", "India Standard Time")
+    token = access_token()
     req = request.Request(
         path if path.startswith("http") else GRAPH + path,
         data=None if body is None else json.dumps(body).encode("utf-8"),
         method=method,
-        headers={"Authorization": f"Bearer {access_token()}",
+        headers={"Authorization": f"Bearer {token}",
                  "Content-Type": "application/json",
                  "Prefer": f'outlook.timezone="{tz}"'})
     try:
@@ -160,9 +180,10 @@ def _graph(method, path, body=None, timeout=15):
         except Exception:
             detail = ""
         if exc.code == 401:
-            if _manual_token():
-                raise OutlookError("The Outlook token expired. Copy a fresh one from Graph Explorer into "
-                                   "VERNIER_OUTLOOK_TOKEN and restart the backend.") from None
+            if token == _manual_token():
+                _expired["token"] = token
+                raise OutlookError("The Outlook token expired. Copy a fresh one from Graph Explorer and run: "
+                                   "python outlook.py token") from None
             raise OutlookError("Outlook sign-in expired. Run: python outlook.py login") from None
         if exc.code == 403:
             raise OutlookError(f"The college account doesn't allow this ({detail or 'access denied'})") from None
@@ -379,6 +400,21 @@ def _cli(args):
     command = args[0] if args else "status"
     if command == "login":
         print(f"Signed in as {login()}. Vernier can now book rooms.")
+    elif command == "token":
+        token = args[1] if len(args) > 1 else input("Paste the Access token from Graph Explorer: ")
+        previous = MANUAL_TOKEN_FILE.read_text(encoding="utf-8") if MANUAL_TOKEN_FILE.exists() else None
+        save_manual_token(token)
+        try:
+            me = _graph("GET", "/me?$select=displayName,mail,userPrincipalName")
+        except OutlookError:
+            # Keep the old token rather than leave a broken one in place.
+            if previous is None:
+                MANUAL_TOKEN_FILE.unlink()
+            else:
+                MANUAL_TOKEN_FILE.write_text(previous, encoding="utf-8")
+            raise OutlookError("Outlook rejected that token, so it wasn't saved. Copy a fresh one from Graph Explorer.") from None
+        print(f"Token saved for {me.get('displayName')} <{me.get('mail') or me.get('userPrincipalName')}>. "
+              "The running backend uses it straight away; no restart needed.")
     elif command == "status":
         print(f"Outlook: {status()}")
         if ready():
@@ -411,9 +447,9 @@ def _cli(args):
                 if response not in {"none", "notResponded"}:
                     break
             print(f"Room answered: {response}")
-            status = {"accepted": "booked", "tentativelyAccepted": "tentative", "declined": "declined"}
-            if response in status:
-                store.set_outlook_booking_status(event["id"], status[response])
+            states = {"accepted": "booked", "tentativelyAccepted": "tentative", "declined": "declined"}
+            if response in states:
+                store.set_outlook_booking_status(event["id"], states[response])
             if response == "declined":
                 cancel(event["id"])
                 print("Removed the declined booking from your calendar.")

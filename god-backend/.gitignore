@@ -18,4 +18,5 @@ tools/run_full_test.py
 
 # Outlook room booking: the token is a login, the config holds phone numbers
 outlook_token.json
+outlook_manual_token.txt
 outlook_config.json

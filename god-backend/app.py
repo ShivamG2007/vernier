@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 import actions
 import model
 import outlook
+import shelf
 import store
 
 HOST = os.environ.get("VERNIER_HOST", "127.0.0.1")
@@ -96,8 +97,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"service": "Vernier master backend", "routes": [
                     "GET / (live database view in a browser)", "GET /db", "GET /health", "GET /items", "GET /items/lost", "GET /items/unclaimed", "GET /events",
                     "GET /listings", "GET /machines", "GET /bookings", "GET /outbox",
-                    "GET /records/{table}", "POST /message", "POST /camera/item",
-                    "POST /camera/item/{id}/removed", "POST /camera/machine",
+                    "GET /records/{table}", "GET /shelf", "POST /message", "POST /camera/item",
+                    "POST /camera/item/{id}/removed", "POST /shelf/snapshot", "POST /shelf/sync",
+                    "POST /camera/machine",
                     "POST /preferences", "POST /outbox/{id}/ack", "POST /outbox/{id}/retry"]})
             elif path.path == "/health":
                 self.send_json(200, {"backend": "ok", "groups_enabled": actions.GROUPS_ENABLED,
@@ -112,6 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"events": store.list_events()})
             elif path.path == "/listings":
                 self.send_json(200, {"listings": store.list_listings()})
+            elif path.path == "/shelf":
+                self.send_json(200, {"shelf": shelf.list_shelf()})
             elif path.path == "/machines":
                 self.send_json(200, {"machines": store.list_machines()})
             elif path.path == "/bookings":
@@ -143,28 +147,37 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/camera/item":
                 if not self.require_privileged():
                     return
+                # Cameras only write the side database (shelf.db); the sync then updates vernier.db.
                 data = self.read_json()
-                item_id = store.add_item(kind="found", item=data.get("name", data.get("item")),
-                    color=data.get("color", data.get("colour")),
-                    place=data.get("foundAt", data.get("place", data.get("location"))),
-                    desc_using_keywords=data.get("descUsingKeywords"),
-                    custom_string=data.get("customString"), image_href=data.get("imageHref"),
-                    please_consult_this_person=data.get("pleaseConsultThisPerson"), source="camera")
-                matches = store.find_matches(item_id)
-                alerted = store.alert_lost_reporters(item_id)
-                self.send_json(201, {"id": item_id,
+                shelf_id = shelf.camera_add(data.get("name", data.get("item")),
+                                            data.get("color", data.get("colour")),
+                                            data.get("customString", data.get("details")),
+                                            data.get("spot", data.get("location")),
+                                            data.get("camera_id", "camera"))
+                shelf.sync_to_main()
+                item_id = shelf.main_id_for(shelf_id)
+                matches = store.find_matches(item_id) if item_id else []
+                self.send_json(201, {"id": shelf_id, "shelf_id": shelf_id, "main_id": item_id,
                                      "matched_lost_ids": [m["id"] for m in matches],
-                                     "matched_lost_id": matches[0]["id"] if matches else None,
-                                     "alerted_lost_ids": alerted})
+                                     "matched_lost_id": matches[0]["id"] if matches else None})
             elif re.fullmatch(r"/camera/item/\d+/removed", path):
                 if not self.require_privileged():
                     return
-                item_id = int(path.split("/")[3])
-                item = store.get_item(item_id)
-                if not item or item["kind"] != "found" or item["source"] != "camera":
-                    raise ValueError("Camera-found item ID does not exist")
-                store.set_claim_status(item_id, True)
+                shelf.camera_remove(int(path.split("/")[3]))
+                shelf.sync_to_main()
                 self.send_json(200, {"ok": True})
+            elif path == "/shelf/snapshot":
+                if not self.require_privileged():
+                    return
+                data = self.read_json()
+                if not isinstance(data.get("seen"), list):
+                    raise ValueError('Send {"seen": [{"item": ..., "color": ..., "spot": ...}]}')
+                changes = shelf.camera_snapshot(data["seen"], data.get("camera_id", "camera"))
+                self.send_json(200, {"ok": True, **changes, "synced": shelf.sync_to_main()})
+            elif path == "/shelf/sync":
+                if not self.require_privileged():
+                    return
+                self.send_json(200, {"ok": True, **shelf.sync_to_main()})
             elif path == "/camera/machine":
                 if not self.require_privileged():
                     return
@@ -228,6 +241,12 @@ if __name__ == "__main__":
         store.reset_db()
         print(f"Database cleared (previous run saved to {store.DB_PATH.stem}-previous.db)")
     store.init_db()
+    shelf.init_shelf()
+    synced = shelf.sync_to_main()
+    shelf.start_sync_loop()
+    print(f"Shelf database (placeholder cameras): {len(shelf.list_shelf('on_shelf'))} items on the shelf, "
+          f"{len(synced['added'])} loaded into the main database. Syncing every "
+          f"{os.environ.get('VERNIER_SHELF_SYNC_SECONDS', '10')}s.")
     print(f"Group chats: {'on' if actions.GROUPS_ENABLED else 'off (set VERNIER_ENABLE_GROUPS=1 here to turn on)'}")
     print(f"Outlook room booking: {outlook.status()}")
     if outlook.ready() and not outlook.config().get("allowed_numbers"):
