@@ -185,6 +185,14 @@ def _words(value):
     return {w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in words}
 
 
+def item_label(color, item):
+    # Skip the colour when the item name already includes it ("red casio calculator").
+    color = color or ""
+    if _words(color) <= _words(item):
+        color = ""
+    return " ".join(v for v in (color, item) if v)
+
+
 def _whatsapp_contact(value):
     return isinstance(value, str) and bool(re.search(r"@(?:c\.us|lid)$", value))
 
