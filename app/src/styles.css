@@ -274,3 +274,11 @@ a.bento-tile:active { transform: translateY(0); }
 .tile-event-list button span { background: #dceeff; color: var(--blue-ink); }
 .machine-indicator.is-recent-free { background: #a8e832; box-shadow: 0 0 0 3px rgba(183,243,74,.28); }
 @media (prefers-reduced-motion:reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+.login-intro { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; background: #fff9fb; opacity: 1; transition: opacity 400ms cubic-bezier(.22, 1, .36, 1); }
+.login-intro-fallback { position: absolute; width: min(34vw, 180px); height: auto; max-height: 30dvh; object-fit: contain; opacity: .9; transition: opacity 250ms ease; }
+.login-intro--playing .login-intro-fallback { opacity: 0; }
+.login-intro canvas { display: block; width: min(88vw, 1100px, 142dvh); height: auto; aspect-ratio: 16 / 9; object-fit: contain; opacity: 0; transform: scale(.975); transition: opacity 500ms cubic-bezier(.22, 1, .36, 1), transform 500ms cubic-bezier(.22, 1, .36, 1); }
+.login-intro--playing canvas { opacity: 1; transform: scale(1); }
+.login-intro--leaving { opacity: 0; pointer-events: none; }
+.login-intro video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
